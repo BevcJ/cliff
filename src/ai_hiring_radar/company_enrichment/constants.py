@@ -1,5 +1,5 @@
 ENRICHMENT_VERSION = "v1"
-PROMPT_VERSION = "v4"
+PROMPT_VERSION = "v5"
 DEFAULT_COMPANY_ENRICHMENT_MODEL = "gpt-5.4-mini"
 COMPANY_ENRICHMENT_RECORD_TYPE = "company_enrichment_extract"
 COMPANY_ENRICHMENT_PROMPT = """Research the company using web search and extract company-level enrichment data.
@@ -13,9 +13,12 @@ Generic public company inboxes are allowed as fallback contacts with role generi
 Contact research is required. After identifying the correct company, run targeted web searches for public named contacts responsible for technology, data, AI, ML, engineering, or technical hiring.
 Search for combinations such as: "{company} CTO LinkedIn", "{company} Head of AI LinkedIn", "{company} Head of Data Science LinkedIn", "{company} VP Engineering LinkedIn", "{company} machine learning lead LinkedIn", "{company} data engineering lead LinkedIn", "{company} technical founder LinkedIn", "{company} AI team contact", and "{company} leadership team".
 Use the job context to guide contact search intent, for example AI Engineer, AI Execution Role, Data Science, ML, or AI team.
+Contact research must be two-pass: first find relevant people from official about/team/leadership pages, job context, speaker pages, news, or reputable public pages; then use each discovered name and title as a search lead to find the person's LinkedIn profile URL or public non-generic work email.
+For every named lead, search exact combinations such as "{person name}" "{company}" LinkedIn, "{person name}" "{title}" "{company}" LinkedIn, and site:linkedin.com/in "{person name}" "{company}".
 Contacts are not limited to email addresses. A LinkedIn person profile URL is a first-class contact result.
 Prefer contacts in this order: named relevant person with LinkedIn profile URL; named relevant person with public non-generic work email; named relevant person from official team, leadership, speaker, or reputable public pages; generic company inbox only as fallback.
 Return multiple credible contacts when found. Do not stop after the first contact.
+Do not stop at an about/team page when it provides only names and titles. Use those names and titles to search for LinkedIn person profiles.
 Do not infer LinkedIn URLs from names. Only return LinkedIn person profile URLs that are found in public search results or public pages.
 LinkedIn company, jobs, search, or post URLs are not valid contact profile URLs.
 Find the official company website and LinkedIn company page when available.

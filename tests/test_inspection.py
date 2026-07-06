@@ -93,7 +93,7 @@ def _enrichment(**overrides):  # noqa: ANN001, ANN202 - compact test fixture hel
         "company_description": "Acme AI builds internal AI tools.",
         "company_description_source_urls": ["https://example.com/about"],
         "industry": "Software",
-        "company_size": "51-200 employees",
+        "company_size": "101-500",
         "founded_year": 2020,
         "company_type": "ai_native",
         "funding_summary": None,
@@ -167,7 +167,7 @@ def test_load_company_inspection_data_joins_and_aggregates_records(tmp_path) -> 
     record = dataset.records[0]
     assert record["company_key"] == "acme ai"
     assert record["company_type"] == "ai_native"
-    assert record["company_size"] == "51-200 employees"
+    assert record["company_size"] == "101-500"
     assert record["industry"] == "Software"
     assert record["ai_tech_forward_signal"] == "strong"
     assert record["company_source_urls"] == [

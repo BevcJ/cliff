@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import argparse
+import re
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 import streamlit as st
 
 from ai_hiring_radar.inspection import CompanyInspectionDataset, load_company_inspection_data
+from ai_hiring_radar.storage_json import DEFAULT_DATA_DIR, processed_dir
 
 
 PARETO_LOGO_URL = "https://www.pareto.si/wp-content/uploads/2023/03/logo_90.png"
+COMPANIES_FILENAME_PATTERN = re.compile(r"companies_(\d{4}-\d{2}-\d{2})\.jsonl")
 WORKPLACE_MODE_OPTIONS = ["remote", "hybrid", "onsite"]
 AI_TEAM_CONTEXT_OPTIONS = ["first_ai_person", "existing_ai_team"]
 DELIVERY_CONTEXT_OPTIONS = ["internal", "external_clients", "mixed"]
@@ -21,6 +25,8 @@ COMPANY_TYPE_OPTIONS = [
     "ai_native",
     "other",
 ]
+COMPANY_SIZE_OPTIONS = ["0-50", "51-100", "101-500", "501+"]
+COMPANY_SIZE_ORDER = {value: index for index, value in enumerate(COMPANY_SIZE_OPTIONS)}
 BOOLEAN_FILTER_OPTIONS = ["Any", "Yes", "No"]
 MISSING_FILTER_OPTION = "(missing)"
 SORT_FIELDS = {
@@ -57,7 +63,10 @@ def main() -> None:
 
     collection_date = _collection_date()
     if collection_date is None:
-        st.error("Pass a collection date with --date YYYY-MM-DD.")
+        st.error(
+            "Pass a collection date with --date YYYY-MM-DD, use ?date=YYYY-MM-DD, "
+            "or add data/processed/companies_YYYY-MM-DD.jsonl."
+        )
         st.stop()
         return
 
@@ -343,7 +352,23 @@ def _collection_date(argv: list[str] | None = None) -> str | None:
         return query_date
 
     env_date = os.environ.get("AI_HIRING_RADAR_INSPECTION_DATE")
-    return env_date or None
+    if env_date:
+        return env_date
+
+    return _latest_collection_date()
+
+
+def _latest_collection_date(*, data_dir: Path = DEFAULT_DATA_DIR) -> str | None:
+    root = processed_dir(data_dir=data_dir)
+    if not root.exists():
+        return None
+
+    dates: list[str] = []
+    for path in root.glob("companies_*.jsonl"):
+        match = COMPANIES_FILENAME_PATTERN.fullmatch(path.name)
+        if match is not None:
+            dates.append(match.group(1))
+    return max(dates) if dates else None
 
 
 def _sidebar_filters(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -374,7 +399,7 @@ def _sidebar_filters(records: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "company_sizes": st.sidebar.multiselect(
             "Company size",
-            _options(records, "company_size", include_missing=True),
+            _company_size_options(records, include_missing=True),
             key="filter_company_sizes",
         ),
         "countries": st.sidebar.multiselect(
@@ -742,10 +767,12 @@ def _sort_records(
     )
 
 
-def _sort_value(record: dict[str, Any], field: str) -> int | str:
+def _sort_value(record: dict[str, Any], field: str) -> int | str | tuple[int, str]:
     if field in {"job_count", "job_description_extract_count"}:
         value = record.get(field)
         return value if isinstance(value, int) else 0
+    if field == "company_size":
+        return _company_size_sort_value(record.get(field))
     if field == "countries":
         return _join(record.get("countries")).casefold()
     if field == "sources":
@@ -754,6 +781,16 @@ def _sort_value(record: dict[str, Any], field: str) -> int | str:
     if value is None:
         return ""
     return str(value).casefold()
+
+
+def _company_size_sort_value(value: object | None) -> tuple[int, str]:
+    if isinstance(value, str):
+        cleaned = " ".join(value.split()).strip()
+        if cleaned in COMPANY_SIZE_ORDER:
+            return (COMPANY_SIZE_ORDER[cleaned], "")
+        if cleaned:
+            return (len(COMPANY_SIZE_OPTIONS), cleaned.casefold())
+    return (len(COMPANY_SIZE_OPTIONS) + 1, "")
 
 
 def _matches_list_filter(
@@ -815,6 +852,17 @@ def _options(
     if include_missing and has_missing:
         options.append(MISSING_FILTER_OPTION)
     return options
+
+
+def _company_size_options(
+    records: list[dict[str, Any]], *, include_missing: bool = False
+) -> list[str]:
+    values = _options(records, "company_size", include_missing=False)
+    ordered = [value for value in COMPANY_SIZE_OPTIONS if value in values]
+    ordered.extend(value for value in values if value not in COMPANY_SIZE_ORDER)
+    if include_missing and any(not record.get("company_size") for record in records):
+        ordered.append(MISSING_FILTER_OPTION)
+    return ordered
 
 
 def _list_options(

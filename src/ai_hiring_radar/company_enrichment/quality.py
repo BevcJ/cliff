@@ -22,6 +22,33 @@ CORE_FACT_FIELDS = (
     ("company_type", "company_type_source_urls"),
     ("funding_summary", "funding_summary_source_urls"),
 )
+CONTACT_QUALITY_RETRY_REASON = (
+    "No named contact with LinkedIn profile or non-generic public work email returned. "
+    "Retry with targeted LinkedIn/contact research."
+)
+CONTACT_QUALITY_RETRY_UNRESOLVED_WARNING = (
+    "No named contact with LinkedIn profile or non-generic public work email found "
+    "after contact retry."
+)
+GENERIC_EMAIL_LOCAL_PARTS = {
+    "admin",
+    "bewerbung",
+    "career",
+    "careers",
+    "contact",
+    "hello",
+    "hr",
+    "info",
+    "jobs",
+    "office",
+    "people",
+    "press",
+    "recruiting",
+    "recruitment",
+    "sales",
+    "support",
+    "team",
+}
 
 
 def prepare_enrichment_for_record(
@@ -65,7 +92,18 @@ def needs_quality_retry(enrichment: CompanyEnrichment) -> str | None:
     if not has_non_ats_source_url(enrichment.source_urls):
         return "No non-ATS source URL returned. Retry with broader web research."
 
+    if not has_high_value_contact(enrichment):
+        return CONTACT_QUALITY_RETRY_REASON
+
     return None
+
+
+def is_contact_quality_retry_reason(reason: str | None) -> bool:
+    return reason == CONTACT_QUALITY_RETRY_REASON
+
+
+def has_high_value_contact(enrichment: CompanyEnrichment) -> bool:
+    return any(_is_high_value_contact(contact.model_dump(mode="json")) for contact in enrichment.contacts)
 
 
 def sanitize_low_trust_named_contact_emails(
@@ -165,6 +203,27 @@ def _has_contact_value(contact: dict[str, Any]) -> bool:
 
 def _is_generic_email_contact(contact: dict[str, Any]) -> bool:
     return clean_scalar(contact.get("role")) == "generic_company_email"
+
+
+def _is_high_value_contact(contact: dict[str, Any]) -> bool:
+    if clean_scalar(contact.get("name")) is None:
+        return False
+    if clean_scalar(contact.get("linkedin_url")) is not None:
+        return True
+    if _is_generic_email_contact(contact):
+        return False
+    email = clean_scalar(contact.get("email"))
+    if email is None or _is_generic_email(email):
+        return False
+    return not any(
+        is_low_trust_contact_source_url(url)
+        for url in normalize_source_urls(contact.get("source_urls"))
+    )
+
+
+def _is_generic_email(email: str) -> bool:
+    local_part = email.split("@", 1)[0].casefold()
+    return local_part in GENERIC_EMAIL_LOCAL_PARTS
 
 
 def _add_low_trust_field_warnings(

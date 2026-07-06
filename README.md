@@ -69,6 +69,26 @@ Lever collection uses the same discovery flow against `site:jobs.lever.co`, then
 
 Personio collection uses the same discovery flow against `site:*.jobs.personio.com`, then fetches the public XML feed from `https://{company_slug}.jobs.personio.com/xml?language=en`. Raw XML is stored in JSON wrappers under `data/raw/ats/YYYY-MM-DD/personio/` and is included by `process` before dedupe and company aggregation.
 
+## Streamlit Cloud Deployment
+
+The deployment entrypoint is `streamlit_app.py`.
+
+The app reads processed JSONL files from `data/processed/`. If no date is provided, it loads the latest `companies_YYYY-MM-DD.jsonl` file. Optional date override:
+
+```text
+https://your-app.streamlit.app/?date=YYYY-MM-DD
+```
+
+For the simplest private deployment:
+
+1. Create a private GitHub repository.
+2. Commit the app code and selected `data/processed/*.jsonl` files you want visible.
+3. In Streamlit Community Cloud, create a new private app from the repository.
+4. Set the main file path to `streamlit_app.py`.
+5. Add trusted viewers in Streamlit Community Cloud.
+
+Only commit processed data that is safe for the selected viewers. Candidate files may include job descriptions, and enrichment files may include public contacts.
+
 ## Tests
 
 ```bash

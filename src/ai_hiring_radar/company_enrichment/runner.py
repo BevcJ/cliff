@@ -21,6 +21,9 @@ from ai_hiring_radar.company_enrichment.inputs import (
 )
 from ai_hiring_radar.company_enrichment.records import build_enrichment_record
 from ai_hiring_radar.company_enrichment.quality import (
+    CONTACT_QUALITY_RETRY_UNRESOLVED_WARNING,
+    has_high_value_contact,
+    is_contact_quality_retry_reason,
     needs_quality_retry,
     prepare_enrichment_for_record,
 )
@@ -373,7 +376,11 @@ def _retry_if_needed(
     if retry_reason is None:
         return enrichment_result, None
 
-    retry_input = _build_quality_retry_input(enrichment_input, retry_reason)
+    retry_input = _build_quality_retry_input(
+        enrichment_input,
+        retry_reason,
+        enrichment=enrichment_result.enrichment,
+    )
     retry_result = _extract_company(
         extractor,
         retry_input,
@@ -383,29 +390,79 @@ def _retry_if_needed(
     )
     if retry_result is None:
         return enrichment_result, "Quality retry failed; salvaged initial model result."
-    return _combine_company_call_results(
+    combined_result = _combine_company_call_results(
         initial_result=enrichment_result,
         retry_result=retry_result,
         model=model,
-    ), None
+        contact_retry=is_contact_quality_retry_reason(retry_reason),
+    )
+    if is_contact_quality_retry_reason(retry_reason) and not has_high_value_contact(
+        combined_result.enrichment
+    ):
+        return combined_result, CONTACT_QUALITY_RETRY_UNRESOLVED_WARNING
+    return combined_result, None
 
 
 def _build_quality_retry_input(
     enrichment_input: dict[str, Any],
     retry_reason: str,
+    *,
+    enrichment: CompanyEnrichment,
 ) -> dict[str, Any]:
     retry_input = dict(enrichment_input)
-    retry_input["quality_retry"] = {
+    retry_details: dict[str, Any] = {
         "reason": retry_reason,
-        "instructions": (
-            "The previous output relied too much on ATS/job-board sources. Search "
-            "again for official company website, LinkedIn company page, reputable "
-            "business/funding profiles, registries, or news. If non-ATS sources "
-            "cannot be found, leave core company facts null, but keep ATS-supported "
-            "AI hiring signals when useful."
-        ),
+        "instructions": _quality_retry_instructions(retry_reason),
+    }
+    if is_contact_quality_retry_reason(retry_reason):
+        retry_details["previous_contacts"] = _contact_retry_leads(enrichment)
+    retry_input["quality_retry"] = {
+        **retry_details,
     }
     return retry_input
+
+
+def _quality_retry_instructions(retry_reason: str) -> str:
+    if is_contact_quality_retry_reason(retry_reason):
+        return (
+            "The previous output did not include a named contact with a LinkedIn "
+            "person profile or non-generic public work email. Use previous_contacts "
+            "as leads. For every named lead, run targeted web searches such as "
+            "\"{name}\" \"{company}\" LinkedIn, \"{name}\" \"{title}\" "
+            "\"{company}\" LinkedIn, and site:linkedin.com/in \"{name}\" "
+            "\"{company}\". Return LinkedIn person profile URLs when found. Search "
+            "also for CTO, VP Engineering, Head of AI, Head of Data Science, ML lead, "
+            "data engineering lead, technical founder, and technical hiring contacts. "
+            "Preserve useful company facts from the prior result if you cannot improve "
+            "them. Do not stop at about/team pages that only provide names and titles."
+        )
+    return (
+        "The previous output relied too much on ATS/job-board sources. Search "
+        "again for official company website, LinkedIn company page, reputable "
+        "business/funding profiles, registries, or news. If non-ATS sources "
+        "cannot be found, leave core company facts null, but keep ATS-supported "
+        "AI hiring signals when useful."
+    )
+
+
+def _contact_retry_leads(enrichment: CompanyEnrichment) -> list[dict[str, Any]]:
+    leads: list[dict[str, Any]] = []
+    for contact in enrichment.model_dump(mode="json").get("contacts", []):
+        if not isinstance(contact, dict):
+            continue
+        lead = {
+            key: value
+            for key, value in {
+                "name": clean_scalar(contact.get("name")),
+                "title": clean_scalar(contact.get("title")),
+                "role": clean_scalar(contact.get("role")),
+                "source_urls": contact.get("source_urls") or [],
+            }.items()
+            if value
+        }
+        if lead:
+            leads.append(lead)
+    return leads
 
 
 def _extract_company(
@@ -504,10 +561,19 @@ def _combine_company_call_results(
     initial_result: _EnrichmentCallResult,
     retry_result: _EnrichmentCallResult,
     model: str,
+    contact_retry: bool = False,
 ) -> _EnrichmentCallResult:
+    enrichment = (
+        _merge_contact_retry_enrichment(
+            initial_result.enrichment,
+            retry_result.enrichment,
+        )
+        if contact_retry
+        else retry_result.enrichment
+    )
     if initial_result.usage is None and retry_result.usage is None:
         return _EnrichmentCallResult(
-            enrichment=retry_result.enrichment,
+            enrichment=enrichment,
             usage=None,
             cost=None,
         )
@@ -519,7 +585,90 @@ def _combine_company_call_results(
         web_search_tool_calls=combined_usage.tool_calls,
     )
     return _EnrichmentCallResult(
-        enrichment=retry_result.enrichment,
+        enrichment=enrichment,
         usage=combined_usage,
         cost=combined_cost,
     )
+
+
+def _merge_contact_retry_enrichment(
+    initial_enrichment: CompanyEnrichment,
+    retry_enrichment: CompanyEnrichment,
+) -> CompanyEnrichment:
+    merged = initial_enrichment.model_dump(mode="json")
+    retry_dump = retry_enrichment.model_dump(mode="json")
+
+    for field in (
+        "company_description",
+        "industry",
+        "company_size",
+        "founded_year",
+        "company_type",
+        "funding_summary",
+        "ai_tech_forward_signal",
+        "ai_tech_forward_reason",
+    ):
+        if merged.get(field) is None and retry_dump.get(field) is not None:
+            merged[field] = retry_dump[field]
+
+    for source_field in (
+        "company_description_source_urls",
+        "industry_source_urls",
+        "company_size_source_urls",
+        "founded_year_source_urls",
+        "company_type_source_urls",
+        "funding_summary_source_urls",
+        "ai_tech_forward_source_urls",
+        "source_urls",
+    ):
+        merged[source_field] = _unique_values(
+            [*merged.get(source_field, []), *retry_dump.get(source_field, [])]
+        )
+
+    merged["contacts"] = _merge_contacts(
+        retry_dump.get("contacts", []),
+        merged.get("contacts", []),
+    )
+    return CompanyEnrichment.model_validate(merged)
+
+
+def _merge_contacts(*contact_groups: list[Any]) -> list[dict[str, Any]]:
+    contacts: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    seen_names: set[str] = set()
+    for group in contact_groups:
+        for contact in group:
+            if not isinstance(contact, dict):
+                continue
+            key = _contact_dedupe_key(contact)
+            name = clean_scalar(contact.get("name"))
+            name_key = name.casefold() if name is not None else None
+            if name_key is not None and name_key in seen_names:
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            if name_key is not None:
+                seen_names.add(name_key)
+            contacts.append(contact)
+    return contacts
+
+
+def _contact_dedupe_key(contact: dict[str, Any]) -> str:
+    for field in ("linkedin_url", "email"):
+        value = clean_scalar(contact.get(field))
+        if value is not None:
+            return f"{field}:{value.casefold()}"
+    values = [
+        clean_scalar(contact.get(field)) or ""
+        for field in ("name", "title", "role")
+    ]
+    return "lead:" + "|".join(value.casefold() for value in values)
+
+
+def _unique_values(values: list[Any]) -> list[Any]:
+    unique: list[Any] = []
+    for value in values:
+        if value not in unique:
+            unique.append(value)
+    return unique

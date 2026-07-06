@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from ai_hiring_radar import inspection_app
+from ai_hiring_radar.storage_json import write_processed_jsonl
 
 
 def _filters(**overrides):  # noqa: ANN001, ANN202 - compact test fixture helper.
@@ -35,7 +36,7 @@ def _record(**overrides):  # noqa: ANN001, ANN202 - compact test fixture helper.
         "ai_team_contexts": ["existing_ai_team"],
         "delivery_contexts": ["internal"],
         "company_type": "ai_native",
-        "company_size": "51-200 employees",
+        "company_size": "101-500",
         "industry": "Software",
         "company_description": "Builds AI tooling.",
         "ai_tech_forward_signal": "strong",
@@ -67,6 +68,19 @@ def test_collection_date_reads_script_argument() -> None:
     )
 
 
+def test_latest_collection_date_returns_latest_companies_file(tmp_path) -> None:
+    write_processed_jsonl("companies_2026-07-01.jsonl", [_record()], data_dir=tmp_path)
+    write_processed_jsonl("companies_2026-07-03.jsonl", [_record()], data_dir=tmp_path)
+    write_processed_jsonl("companies_2026-07-02.jsonl", [_record()], data_dir=tmp_path)
+    write_processed_jsonl("job_candidates_2026-07-04.jsonl", [_record()], data_dir=tmp_path)
+
+    assert inspection_app._latest_collection_date(data_dir=tmp_path) == "2026-07-03"
+
+
+def test_latest_collection_date_returns_none_without_company_files(tmp_path) -> None:
+    assert inspection_app._latest_collection_date(data_dir=tmp_path) is None
+
+
 def test_apply_filters_matches_required_optional_and_search_filters() -> None:
     records = [_record(), _record(company="Beta", workplace_modes=["onsite"])]
 
@@ -77,7 +91,7 @@ def test_apply_filters_matches_required_optional_and_search_filters() -> None:
             ai_team_contexts=["existing_ai_team"],
             delivery_contexts=["internal"],
             company_types=["ai_native"],
-            company_sizes=["51-200 employees"],
+            company_sizes=["101-500"],
             countries=["Netherlands"],
             role_classifications=["AI Execution Role"],
             sources=["lever"],
@@ -119,7 +133,7 @@ def test_apply_filters_supports_missing_list_filter_values() -> None:
 
 def test_apply_filters_supports_missing_scalar_filter_values() -> None:
     records = [
-        _record(company="With size", company_size="51-200 employees"),
+        _record(company="With size", company_size="101-500"),
         _record(company="Missing size", company_size=None),
     ]
 
@@ -147,13 +161,49 @@ def test_apply_filters_supports_missing_source_filter_values() -> None:
 
 def test_filter_options_include_missing_when_records_are_sparse() -> None:
     records = [
-        _record(company="With size", company_size="51-200 employees"),
+        _record(company="With size", company_size="101-500"),
         _record(company="Missing size", company_size=None),
     ]
 
-    assert inspection_app._options(records, "company_size", include_missing=True) == [
-        "51-200 employees",
+    assert inspection_app._company_size_options(records, include_missing=True) == [
+        "101-500",
         inspection_app.MISSING_FILTER_OPTION,
+    ]
+
+
+def test_company_size_options_use_bucket_order_before_legacy_values() -> None:
+    records = [
+        _record(company="Large", company_size="501+"),
+        _record(company="Legacy", company_size="51-200 employees"),
+        _record(company="Small", company_size="0-50"),
+        _record(company="Medium", company_size="51-100"),
+    ]
+
+    assert inspection_app._company_size_options(records) == [
+        "0-50",
+        "51-100",
+        "501+",
+        "51-200 employees",
+    ]
+
+
+def test_sort_records_orders_company_size_buckets() -> None:
+    records = [
+        _record(company="Large", company_size="501+"),
+        _record(company="Small", company_size="0-50"),
+        _record(company="Mid", company_size="101-500"),
+    ]
+
+    sorted_records = inspection_app._sort_records(
+        records,
+        "company_size",
+        descending=False,
+    )
+
+    assert [record["company"] for record in sorted_records] == [
+        "Small",
+        "Mid",
+        "Large",
     ]
 
 

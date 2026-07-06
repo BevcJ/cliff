@@ -12,12 +12,14 @@ from ai_hiring_radar.company_enrichment import (
     CompanyContact,
     CompanyContactRole,
     CompanyEnrichment,
+    CompanySizeRange,
     CompanyType,
     PydanticAICompanyEnrichmentExtractor,
     build_enrichment_input,
     build_enrichment_record,
     enrichment_quality_error,
     group_candidate_records_by_company,
+    needs_quality_retry,
     normalize_source_urls,
     prepare_enrichment_for_record,
     run_company_enrichment,
@@ -144,9 +146,19 @@ def test_company_enrichment_defaults_missing_values_and_generic_contact() -> Non
 
 
 def test_company_enrichment_prompt_contains_locked_rules() -> None:
-    assert PROMPT_VERSION == "v3"
+    assert PROMPT_VERSION == "v5"
     assert DEFAULT_COMPANY_ENRICHMENT_MODEL == "gpt-5.4-mini"
     assert "You must use web search" in COMPANY_ENRICHMENT_PROMPT
+    assert "Contact research is required" in COMPANY_ENRICHMENT_PROMPT
+    assert "Contact research must be two-pass" in COMPANY_ENRICHMENT_PROMPT
+    assert "Return multiple credible contacts" in COMPANY_ENRICHMENT_PROMPT
+    assert "Do not stop at an about/team page" in COMPANY_ENRICHMENT_PROMPT
+    assert "LinkedIn person profile URL is a first-class contact result" in (
+        COMPANY_ENRICHMENT_PROMPT
+    )
+    assert "Company size must be one of these sortable buckets" in (
+        COMPANY_ENRICHMENT_PROMPT
+    )
     assert "Do not guess" in COMPANY_ENRICHMENT_PROMPT
     assert "Do not infer private email addresses" in COMPANY_ENRICHMENT_PROMPT
     assert "generic_company_email" in COMPANY_ENRICHMENT_PROMPT
@@ -206,6 +218,31 @@ def test_company_contact_keeps_valid_linkedin_url() -> None:
     )
 
     assert contact.linkedin_url == "https://www.linkedin.com/in/ada-lovelace"
+    assert contact.source_urls == ["https://www.linkedin.com/in/ada-lovelace"]
+
+
+def test_company_contact_rejects_non_person_linkedin_url() -> None:
+    contact = CompanyContact.model_validate(
+        {"linkedin_url": "https://www.linkedin.com/company/acme-ai"}
+    )
+
+    assert contact.linkedin_url is None
+
+
+def test_company_size_normalizes_to_sortable_bucket() -> None:
+    assert (
+        CompanyEnrichment(company_size="86 employees").company_size
+        is CompanySizeRange.FROM_51_TO_100
+    )
+    assert (
+        CompanyEnrichment(company_size="51-200 employees").company_size
+        is CompanySizeRange.FROM_101_TO_500
+    )
+    assert (
+        CompanyEnrichment(company_size="1,001-5,000 employees").company_size
+        is CompanySizeRange.FROM_501_UP
+    )
+    assert CompanyEnrichment(company_size="unknown").company_size is None
 
 
 def test_company_contact_downgrades_cto_role_when_title_is_finance() -> None:
@@ -290,6 +327,7 @@ def test_build_enrichment_record_excludes_raw_content_and_unions_source_urls() -
     assert record["company_description"] == (
         "Acme AI builds logistics automation software."
     )
+    assert record["company_size"] == "101-500"
     assert record["contacts"][1]["role"] == "generic_company_email"
     assert record["source_urls"] == [
         "https://example.com/about",
@@ -331,6 +369,67 @@ def test_quality_error_rejects_empty_job_board_only_results() -> None:
         "No non-ATS source URL returned; web search likely did not verify "
         "company-level facts."
     )
+
+
+def test_quality_retry_requests_contact_research_for_name_only_contacts() -> None:
+    enrichment = CompanyEnrichment(
+        company_description="Acme AI builds software.",
+        company_description_source_urls=["https://example.com/about"],
+        contacts=[
+            CompanyContact(
+                name="Ada Lovelace",
+                role=CompanyContactRole.CTO,
+                title="CTO",
+                source_urls=["https://example.com/team"],
+            )
+        ],
+        source_urls=["https://example.com/about"],
+    )
+
+    retry_reason = needs_quality_retry(enrichment)
+
+    assert retry_reason is not None
+    assert "LinkedIn profile or non-generic public work email" in retry_reason
+
+
+def test_quality_retry_requests_contact_research_for_generic_only_contacts() -> None:
+    enrichment = CompanyEnrichment(
+        company_description="Acme AI builds software.",
+        company_description_source_urls=["https://example.com/about"],
+        contacts=[
+            CompanyContact(
+                role=CompanyContactRole.GENERIC_COMPANY_EMAIL,
+                email="info@example.com",
+                source_urls=["https://example.com/contact"],
+            )
+        ],
+        source_urls=["https://example.com/about"],
+    )
+
+    assert needs_quality_retry(enrichment) is not None
+
+
+def test_quality_retry_accepts_named_linkedin_or_non_generic_email_contact() -> None:
+    linkedin_enrichment = CompanyEnrichment(
+        company_description="Acme AI builds software.",
+        company_description_source_urls=["https://example.com/about"],
+        contacts=[
+            CompanyContact(
+                name="Ada Lovelace",
+                linkedin_url="https://www.linkedin.com/in/ada-lovelace",
+            )
+        ],
+        source_urls=["https://example.com/about"],
+    )
+    email_enrichment = CompanyEnrichment(
+        company_description="Acme AI builds software.",
+        company_description_source_urls=["https://example.com/about"],
+        contacts=[CompanyContact(name="Ada Lovelace", email="ada@example.com")],
+        source_urls=["https://example.com/about"],
+    )
+
+    assert needs_quality_retry(linkedin_enrichment) is None
+    assert needs_quality_retry(email_enrichment) is None
 
 
 def test_prepare_enrichment_removes_ats_only_core_fields_but_keeps_ai_signal() -> None:
@@ -414,7 +513,7 @@ def test_prepare_enrichment_keeps_low_trust_company_facts_with_warning() -> None
     )
 
     assert prepared.enrichment is not None
-    assert prepared.enrichment.company_size == "86 employees"
+    assert prepared.enrichment.company_size is CompanySizeRange.FROM_51_TO_100
     assert prepared.quality_warnings == (
         "Kept company_size although it is supported only by low-trust directory sources.",
     )
@@ -467,6 +566,12 @@ def test_run_company_enrichment_writes_jsonl_with_fake_extractor(tmp_path) -> No
             output=CompanyEnrichment(
                 company_type=CompanyType.PRODUCT_COMPANY,
                 company_type_source_urls=["https://example.com/about"],
+                contacts=[
+                    CompanyContact(
+                        name="Ada Lovelace",
+                        linkedin_url="https://www.linkedin.com/in/ada-lovelace",
+                    )
+                ],
                 source_urls=["https://example.com/about"],
             ),
             usage=LLMUsage(
@@ -528,6 +633,12 @@ def test_run_company_enrichment_counts_skips_and_errors(tmp_path) -> None:
         return {
             "company_type": "product_company",
             "company_type_source_urls": ["https://example.com/about"],
+            "contacts": [
+                {
+                    "name": "Ada Lovelace",
+                    "linkedin_url": "https://www.linkedin.com/in/ada-lovelace",
+                }
+            ],
             "source_urls": ["https://example.com/about"],
         }
 
@@ -579,6 +690,12 @@ def test_run_company_enrichment_resumes_existing_output(tmp_path) -> None:
         return {
             "company_type": "product_company",
             "company_type_source_urls": ["https://example.com/about"],
+            "contacts": [
+                {
+                    "name": "Ada Lovelace",
+                    "linkedin_url": "https://www.linkedin.com/in/ada-lovelace",
+                }
+            ],
             "source_urls": ["https://example.com/about"],
         }
 
@@ -597,6 +714,123 @@ def test_run_company_enrichment_resumes_existing_output(tmp_path) -> None:
     assert result.enriched_count == 1
     records = read_jsonl(result.output_path)
     assert [record["company_key"] for record in records] == ["acme-ai", "beta-ai"]
+
+
+def test_run_company_enrichment_retries_name_only_contacts_and_merges_linkedin(
+    tmp_path,
+) -> None:
+    write_processed_jsonl(
+        "companies_2026-07-02.jsonl",
+        [_company(company="Acme AI")],
+        data_dir=tmp_path,
+    )
+    calls: list[dict[str, Any]] = []
+
+    def fake_extractor(enrichment_input: dict[str, Any]) -> dict[str, Any]:
+        calls.append(enrichment_input)
+        if len(calls) == 1:
+            return {
+                "company_description": "Acme AI builds logistics automation software.",
+                "company_description_source_urls": ["https://example.com/about"],
+                "company_type": "product_company",
+                "company_type_source_urls": ["https://example.com/about"],
+                "contacts": [
+                    {
+                        "name": "Ada Lovelace",
+                        "role": "cto",
+                        "title": "CTO",
+                        "source_urls": ["https://example.com/team"],
+                    }
+                ],
+                "source_urls": ["https://example.com/about"],
+            }
+        assert calls[1]["quality_retry"]["previous_contacts"] == [
+            {
+                "name": "Ada Lovelace",
+                "title": "CTO",
+                "role": "cto",
+                "source_urls": ["https://example.com/team"],
+            }
+        ]
+        assert "LinkedIn" in calls[1]["quality_retry"]["instructions"]
+        return {
+            "contacts": [
+                {
+                    "name": "Ada Lovelace",
+                    "role": "cto",
+                    "title": "CTO",
+                    "linkedin_url": "https://www.linkedin.com/in/ada-lovelace",
+                }
+            ]
+        }
+
+    result = run_company_enrichment(
+        "2026-07-02",
+        extractor=fake_extractor,
+        model="test-model",
+        data_dir=tmp_path,
+        clock=lambda: "2026-07-02T10:00:00Z",
+        show_progress=False,
+    )
+
+    assert len(calls) == 2
+    assert result.enriched_count == 1
+    records = read_jsonl(result.output_path)
+    assert records[0]["company_description"] == (
+        "Acme AI builds logistics automation software."
+    )
+    assert records[0]["company_type"] == "product_company"
+    assert records[0]["contacts"] == [
+        {
+            "email": None,
+            "linkedin_url": "https://www.linkedin.com/in/ada-lovelace",
+            "name": "Ada Lovelace",
+            "role": "cto",
+            "source_urls": ["https://www.linkedin.com/in/ada-lovelace"],
+            "title": "CTO",
+        }
+    ]
+    assert records[0]["quality_warnings"] == []
+
+
+def test_run_company_enrichment_warns_when_contact_retry_still_has_no_linkedin(
+    tmp_path,
+) -> None:
+    write_processed_jsonl(
+        "companies_2026-07-02.jsonl",
+        [_company(company="Acme AI")],
+        data_dir=tmp_path,
+    )
+
+    def fake_extractor(enrichment_input: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "company_description": "Acme AI builds logistics automation software.",
+            "company_description_source_urls": ["https://example.com/about"],
+            "contacts": [
+                {
+                    "name": "Ada Lovelace",
+                    "role": "cto",
+                    "title": "CTO",
+                    "source_urls": ["https://example.com/team"],
+                }
+            ],
+            "source_urls": ["https://example.com/about"],
+        }
+
+    result = run_company_enrichment(
+        "2026-07-02",
+        extractor=fake_extractor,
+        model="test-model",
+        data_dir=tmp_path,
+        clock=lambda: "2026-07-02T10:00:00Z",
+        show_progress=False,
+    )
+
+    assert result.enriched_count == 1
+    records = read_jsonl(result.output_path)
+    assert records[0]["quality_warnings"] == [
+        "No named contact with LinkedIn profile or non-generic public work email found after contact retry."
+    ]
 
 
 def test_run_company_enrichment_counts_quality_errors(tmp_path) -> None:
