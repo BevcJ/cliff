@@ -1,0 +1,52 @@
+countries:
+  nl:
+    name: Netherlands
+    search_location: Netherlands
+    gl: nl
+    hl: en
+    search_locations:
+      - label: Netherlands
+        query_location: Netherlands
+        serper_location: Netherlands
+      - label: Amsterdam
+        query_location: Amsterdam Netherlands
+        serper_location: Amsterdam, North Holland, Netherlands
+      - label: Rotterdam
+        query_location: Rotterdam Netherlands
+        serper_location: Rotterdam, South Holland, Netherlands
+      - label: Utrecht
+        query_location: Utrecht Netherlands
+        serper_location: Utrecht, Utrecht, Netherlands
+      - label: Eindhoven
+        query_location: Eindhoven Netherlands
+        serper_location: Eindhoven, North Brabant, Netherlands
+      - label: The Hague
+        query_location: The Hague Netherlands
+        serper_location: The Hague, South Holland, Netherlands
+      - label: Delft
+        query_location: Delft Netherlands
+        serper_location: Delft, South Holland, Netherlands
+      - label: Leiden
+        query_location: Leiden Netherlands
+        serper_location: Leiden, South Holland, Netherlands
+      - label: Groningen
+        query_location: Groningen Netherlands
+        serper_location: Groningen, Groningen, Netherlands
+      - label: Remote Netherlands
+        query_location: Remote Netherlands
+        serper_location: Netherlands
+      - label: Randstad
+        query_location: Randstad Netherlands
+        serper_location: Randstad, Netherlands
+
+  uk:
+    name: United Kingdom
+    search_location: United Kingdom
+    gl: uk
+    hl: en
+
+  dk:
+    name: Denmark
+    search_location: Denmark
+    gl: dk
+    hl: en
