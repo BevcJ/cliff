@@ -55,6 +55,7 @@ def run_company_enrichment(
     model: str,
     data_dir: Path = DEFAULT_DATA_DIR,
     limit: int | None = None,
+    country_names: list[str] | None = None,
     dry_run: bool = False,
     clock: Callable[[], str] = utc_now_iso,
     show_progress: bool = True,
@@ -66,8 +67,14 @@ def run_company_enrichment(
     output_filename = f"company_enrichment_extracts_{normalized_date}.jsonl"
 
     raw_company_records = read_processed_jsonl(company_input_filename, data_dir=data_dir)
+    filtered_company_records = _filter_company_records_by_country(
+        raw_company_records,
+        country_names=country_names,
+    )
     records_to_process = (
-        raw_company_records[:limit] if limit is not None else raw_company_records
+        filtered_company_records[:limit]
+        if limit is not None
+        else filtered_company_records
     )
     raw_candidate_records = _read_candidate_records_if_present(
         candidate_input_filename,
@@ -124,6 +131,47 @@ def run_company_enrichment(
         validation_error_samples=tuple(run_state.validation_error_samples),
         llm_error_samples=tuple(run_state.llm_error_samples),
         quality_error_samples=tuple(run_state.quality_error_samples),
+    )
+
+
+def _filter_company_records_by_country(
+    records: list[Any],
+    *,
+    country_names: list[str] | None,
+) -> list[Any]:
+    if not country_names:
+        return records
+
+    selected_countries = {
+        country.casefold()
+        for country in (clean_scalar(country_name) for country_name in country_names)
+        if country is not None
+    }
+    if not selected_countries:
+        return records
+
+    return [
+        record
+        for record in records
+        if isinstance(record, dict)
+        and _company_record_matches_country(record, selected_countries)
+    ]
+
+
+def _company_record_matches_country(
+    record: dict[str, Any],
+    selected_countries: set[str],
+) -> bool:
+    raw_countries = record.get("countries")
+    if isinstance(raw_countries, (list, tuple, set)):
+        countries = [clean_scalar(country) for country in raw_countries]
+    else:
+        countries = [clean_scalar(raw_countries)]
+
+    return any(
+        country.casefold() in selected_countries
+        for country in countries
+        if country is not None
     )
 
 

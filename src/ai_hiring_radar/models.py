@@ -21,6 +21,7 @@ class SourceName(StrEnum):
     GREENHOUSE = "greenhouse"
     LEVER = "lever"
     PERSONIO = "personio"
+    SMARTRECRUITERS = "smartrecruiters"
 
 
 class SourceMode(StrEnum):

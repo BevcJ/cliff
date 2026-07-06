@@ -53,8 +53,6 @@ class PydanticAICompanyEnrichmentExtractor:
         enrichment_input: dict[str, Any],
     ) -> LLMCallResult[CompanyEnrichment]:
         result = self.agent.run_sync(_build_prompt(enrichment_input))
-        # print(result.output)
-        # print("--------------------------------")
         return LLMCallResult(
             output=CompanyEnrichment.model_validate(result.output),
             usage=usage_from_run_usage(getattr(result, "usage", None)),

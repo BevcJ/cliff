@@ -57,7 +57,12 @@ def is_ats_url(value: object | None) -> bool:
     host = parsed.netloc.casefold()
     path = parsed.path.casefold()
     return (
-        host.endswith(".jobs.personio.com")
+        host in {
+            "api.smartrecruiters.com",
+            "careers.smartrecruiters.com",
+            "jobs.smartrecruiters.com",
+        }
+        or host.endswith(".jobs.personio.com")
         or host == "jobs.personio.com"
         or host == "jobs.ashbyhq.com"
         or host == "jobs.lever.co"

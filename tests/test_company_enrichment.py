@@ -716,6 +716,51 @@ def test_run_company_enrichment_resumes_existing_output(tmp_path) -> None:
     assert [record["company_key"] for record in records] == ["acme-ai", "beta-ai"]
 
 
+def test_run_company_enrichment_filters_by_any_country_before_limit(tmp_path) -> None:
+    write_processed_jsonl(
+        "companies_2026-07-02.jsonl",
+        [
+            _company(company="UK AI", countries=["United Kingdom"]),
+            _company(company="Nordic AI", countries=["United Kingdom", "Denmark"]),
+            _company(company="Dutch AI", countries=["Netherlands"]),
+        ],
+        data_dir=tmp_path,
+    )
+    calls: list[str] = []
+
+    def fake_extractor(enrichment_input: dict[str, Any]) -> dict[str, Any]:
+        calls.append(enrichment_input["company"])
+        return {
+            "company_type": "product_company",
+            "company_type_source_urls": ["https://example.com/about"],
+            "contacts": [
+                {
+                    "name": "Ada Lovelace",
+                    "linkedin_url": "https://www.linkedin.com/in/ada-lovelace",
+                }
+            ],
+            "source_urls": ["https://example.com/about"],
+        }
+
+    result = run_company_enrichment(
+        "2026-07-02",
+        extractor=fake_extractor,
+        model="test-model",
+        data_dir=tmp_path,
+        country_names=["Denmark", "Netherlands"],
+        limit=1,
+        clock=lambda: "2026-07-02T10:00:00Z",
+        show_progress=False,
+    )
+
+    assert calls == ["Nordic AI"]
+    assert result.companies_read == 1
+    assert result.processable_count == 1
+    assert result.enriched_count == 1
+    records = read_jsonl(result.output_path)
+    assert [record["company"] for record in records] == ["Nordic AI"]
+
+
 def test_run_company_enrichment_retries_name_only_contacts_and_merges_linkedin(
     tmp_path,
 ) -> None:

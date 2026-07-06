@@ -68,13 +68,16 @@ def test_collection_date_reads_script_argument() -> None:
     )
 
 
-def test_latest_collection_date_returns_latest_companies_file(tmp_path) -> None:
+def test_latest_collection_date_returns_latest_company_or_artifact_file(tmp_path) -> None:
     write_processed_jsonl("companies_2026-07-01.jsonl", [_record()], data_dir=tmp_path)
     write_processed_jsonl("companies_2026-07-03.jsonl", [_record()], data_dir=tmp_path)
     write_processed_jsonl("companies_2026-07-02.jsonl", [_record()], data_dir=tmp_path)
+    write_processed_jsonl(
+        "inspection_companies_2026-07-04.jsonl", [_record()], data_dir=tmp_path
+    )
     write_processed_jsonl("job_candidates_2026-07-04.jsonl", [_record()], data_dir=tmp_path)
 
-    assert inspection_app._latest_collection_date(data_dir=tmp_path) == "2026-07-03"
+    assert inspection_app._latest_collection_date(data_dir=tmp_path) == "2026-07-04"
 
 
 def test_latest_collection_date_returns_none_without_company_files(tmp_path) -> None:
@@ -244,21 +247,85 @@ def test_selected_record_from_event_uses_clicked_row() -> None:
     assert selected["company"] == "Beta"
 
 
-def test_selected_record_from_event_defaults_to_first_record() -> None:
+def test_selected_record_from_event_returns_none_without_selection() -> None:
     records = [_record(company="Acme"), _record(company="Beta")]
     event = SimpleNamespace(selection=SimpleNamespace(rows=[]))
 
     selected = inspection_app._selected_record_from_event(records, event)
 
-    assert selected is not None
-    assert selected["company"] == "Acme"
+    assert selected is None
 
 
-def test_selected_record_from_event_falls_back_when_selection_is_out_of_range() -> None:
+def test_selected_record_from_event_returns_none_when_selection_is_out_of_range() -> None:
     records = [_record(company="Acme")]
     event = SimpleNamespace(selection=SimpleNamespace(rows=[9]))
 
     selected = inspection_app._selected_record_from_event(records, event)
 
-    assert selected is not None
-    assert selected["company"] == "Acme"
+    assert selected is None
+
+
+def test_job_table_row_excludes_normalized_title() -> None:
+    row = inspection_app._job_table_row(
+        {
+            "job_title_raw": "Senior AI Engineer",
+            "job_title_normalized": "AI Engineer",
+            "role_group": "AI Execution Role",
+        }
+    )
+
+    assert row["Title"] == "Senior AI Engineer"
+    assert "Normalized Title" not in row
+
+
+def test_job_description_html_keeps_supported_html_and_removes_unsafe_blocks() -> None:
+    html = inspection_app._job_description_html(
+        "<h2>About</h2><p>Build AI.</p><script>alert('x')</script><style>body{}</style>"
+    )
+
+    assert '<div class="job-description-card">' in html
+    assert "<h2>About</h2>" in html
+    assert "<p>Build AI.</p>" in html
+    assert "<script" not in html
+    assert "<style" not in html
+
+
+def test_job_description_html_escapes_plain_text() -> None:
+    html = inspection_app._job_description_html("Build 5 < 10 AI & automation")
+
+    assert "Build 5 &lt; 10 AI &amp; automation" in html
+
+
+def test_job_description_html_returns_empty_for_missing_description() -> None:
+    assert inspection_app._job_description_html(None) == ""
+
+
+def test_url_link_html_opens_http_urls_in_new_tab() -> None:
+    html = inspection_app._url_link_html("https://example.com/jobs?a=1&b=2")
+
+    assert 'href="https://example.com/jobs?a=1&amp;b=2"' in html
+    assert 'target="_blank"' in html
+    assert 'rel="noopener noreferrer"' in html
+    assert "example.com/jobs?a=1&amp;b=2" in html
+
+
+def test_url_link_html_escapes_non_http_values_without_linking() -> None:
+    html = inspection_app._url_link_html('javascript:alert("x")')
+
+    assert html == "javascript:alert(&quot;x&quot;)"
+    assert "<a " not in html
+
+
+def test_render_job_description_calls_streamlit_html_without_extra_kwargs(monkeypatch) -> None:
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def fake_html(*args: object, **kwargs: object) -> None:
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(inspection_app.st, "html", fake_html)
+
+    inspection_app._render_job_description({"description": "<p>Build AI.</p>"})
+
+    assert len(calls) == 1
+    assert "<p>Build AI.</p>" in str(calls[0][0][0])
+    assert calls[0][1] == {}

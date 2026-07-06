@@ -271,9 +271,58 @@ def test_enrich_companies_dry_run_does_not_create_extractor(monkeypatch) -> None
     assert calls[0]["extractor"] is None
     assert calls[0]["model"] == "company-config-model"
     assert calls[0]["limit"] == 3
+    assert calls[0]["country_names"] is None
     assert calls[0]["dry_run"] is True
     assert "Company enrichment dry run" in result.output
     assert "2 processable" in result.output
+
+
+def test_enrich_companies_passes_country_filter(monkeypatch) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def fake_runner(collection_date: str, **kwargs: Any) -> CompanyEnrichmentRunResult:
+        calls.append({"collection_date": collection_date, **kwargs})
+        return _company_result(dry_run=True, model=kwargs["model"])
+
+    def fail_extractor(**_: Any) -> None:
+        raise AssertionError("dry run must not create the Pydantic AI extractor")
+
+    monkeypatch.setattr(cli, "load_settings", _settings)
+    monkeypatch.setattr(cli, "PydanticAICompanyEnrichmentExtractor", fail_extractor)
+    monkeypatch.setattr(cli, "run_company_enrichment", fake_runner)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "enrich-companies",
+            "--date",
+            "2026-07-02",
+            "--countries",
+            "nl,dk",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls[0]["country_names"] == ["Netherlands", "Denmark"]
+    assert calls[0]["dry_run"] is True
+
+
+def test_enrich_companies_rejects_unknown_country_filter() -> None:
+    result = runner.invoke(
+        cli.app,
+        [
+            "enrich-companies",
+            "--date",
+            "2026-07-02",
+            "--countries",
+            "se",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "Unknown country code(s): se" in result.output
 
 
 def test_enrich_companies_uses_model_override(monkeypatch) -> None:
@@ -380,6 +429,34 @@ def test_inspect_launches_streamlit_with_normalized_date(monkeypatch) -> None:
     assert result.exit_code == 0
     assert calls == ["2026-07-02"]
     assert "Launching company inspection UI for 2026-07-02" in result.output
+
+
+def test_export_inspection_writes_artifact(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_export(collection_date: str) -> SimpleNamespace:
+        calls.append(collection_date)
+        return SimpleNamespace(
+            path=Path("data/processed/inspection_companies_2026-07-02.jsonl"),
+            company_count=2,
+            job_count=3,
+        )
+
+    monkeypatch.setattr(cli, "export_company_inspection_artifact", fake_export)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "export-inspection",
+            "--date",
+            "2026-07-02",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == ["2026-07-02"]
+    assert "Inspection artifact complete: 2 company record(s), 3 job record(s)." in result.output
+    assert "data/processed/inspection_companies_2026-07-02.jsonl" in result.output
 
 
 def test_inspect_rejects_invalid_date() -> None:

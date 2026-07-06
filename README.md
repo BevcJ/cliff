@@ -39,6 +39,7 @@ uv run ai-hiring-radar extract-job-descriptions --date YYYY-MM-DD --limit 10
 uv run ai-hiring-radar extract-job-descriptions --date YYYY-MM-DD --model gpt-5.4-mini
 uv run ai-hiring-radar extract-job-descriptions --date YYYY-MM-DD --restart
 uv run ai-hiring-radar enrich-companies --date YYYY-MM-DD --dry-run
+uv run ai-hiring-radar enrich-companies --date YYYY-MM-DD --countries nl,dk --dry-run
 uv run ai-hiring-radar enrich-companies --date YYYY-MM-DD --limit 3
 uv run ai-hiring-radar enrich-companies --date YYYY-MM-DD --model gpt-5.4-mini
 uv run ai-hiring-radar enrich-companies --date YYYY-MM-DD --no-progress
@@ -55,7 +56,7 @@ Processing reads those raw wrappers, writes deduplicated candidates to `data/pro
 
 Job description extraction is a separate step after `process`. It reads `data/processed/job_candidates_YYYY-MM-DD.jsonl`, calls a Pydantic AI structured-output extractor for candidates with useful ATS/job-description data, and writes compact records to `data/processed/job_description_extracts_YYYY-MM-DD.jsonl`. The extraction output includes model/prompt metadata and structured datapoints, but intentionally does not include full job description text, evidence snippets, raw LLM responses, or confidence scores. Progress is shown by default with `tqdm`; use `--no-progress` for quiet runs. Successful records are appended immediately, and reruns resume by skipping existing `job_id`s. Use `--restart` to clear existing extracts first. Use `--dry-run` to count processable candidates without model calls or output writes.
 
-Company enrichment is a separate step after `process`. It reads `data/processed/companies_YYYY-MM-DD.jsonl`, optionally joins compact context from `data/processed/job_candidates_YYYY-MM-DD.jsonl`, uses Pydantic AI with native web search to extract company facts and public contacts, and writes `data/processed/company_enrichment_extracts_YYYY-MM-DD.jsonl`. The enrichment output includes model/prompt metadata, source URLs, company facts, named public contacts, generic public inboxes, and compact `quality_warnings`, but intentionally does not include full web page text, search result dumps, evidence snippets, job age, final recommendations, outreach reasons, or raw LLM responses. Progress is shown by default with `tqdm`; use `--no-progress` for quiet runs. Successful records are appended immediately, and reruns resume by skipping existing `company_key`s. Use `--restart` to clear existing extracts first. Core company facts require non-ATS source URLs; if a model returns ATS-only company facts, the runner retries once, then removes only unsupported fields while preserving useful ATS-supported AI hiring signals. Use `--dry-run` to count processable companies without model calls or output writes.
+Company enrichment is a separate step after `process`. It reads `data/processed/companies_YYYY-MM-DD.jsonl`, optionally joins compact context from `data/processed/job_candidates_YYYY-MM-DD.jsonl`, uses Pydantic AI with native web search to extract company facts and public contacts, and writes `data/processed/company_enrichment_extracts_YYYY-MM-DD.jsonl`. The enrichment output includes model/prompt metadata, source URLs, company facts, named public contacts, generic public inboxes, and compact `quality_warnings`, but intentionally does not include full web page text, search result dumps, evidence snippets, job age, final recommendations, outreach reasons, or raw LLM responses. Progress is shown by default with `tqdm`; use `--no-progress` for quiet runs. Successful records are appended immediately, and reruns resume by skipping existing `company_key`s. Use `--countries nl,dk` to enrich only companies matching any selected country code before broadening to the full set later. Use `--restart` to clear existing extracts first. Core company facts require non-ATS source URLs; if a model returns ATS-only company facts, the runner retries once, then removes only unsupported fields while preserving useful ATS-supported AI hiring signals. Use `--dry-run` to count processable companies without model calls or output writes.
 
 Inspection launches a local read-only Streamlit UI for one processed date. It requires `data/processed/companies_YYYY-MM-DD.jsonl` and uses `data/processed/job_candidates_YYYY-MM-DD.jsonl`, `data/processed/job_description_extracts_YYYY-MM-DD.jsonl`, and `data/processed/company_enrichment_extracts_YYYY-MM-DD.jsonl` when present. Missing optional files only reduce available filters and detail panels. The UI supports filtering by workplace mode, AI team context, delivery context, company type, raw company size, country, role classification, source/platform, AI tech-forward signal, contacts, JD extracts, enrichment status, and free-text search. It is local-only and read-only; it does not edit review status, save notes, run collection, or replace the CSV/Markdown export flow.
 
@@ -73,7 +74,13 @@ Personio collection uses the same discovery flow against `site:*.jobs.personio.c
 
 The deployment entrypoint is `streamlit_app.py`.
 
-The app reads processed JSONL files from `data/processed/`. If no date is provided, it loads the latest `companies_YYYY-MM-DD.jsonl` file. Optional date override:
+The local inspection app reads full processed JSONL files from `data/processed/`. For Streamlit Cloud, export a compact inspection artifact instead of committing the full candidate data:
+
+```bash
+uv run ai-hiring-radar export-inspection --date YYYY-MM-DD
+```
+
+This writes `data/processed/inspection_companies_YYYY-MM-DD.jsonl`. The artifact keeps company facts, job metadata, extracted filters, contacts, and URLs, but omits full job-description text and raw nested payloads. If no date is provided, the deployed app loads the latest `companies_YYYY-MM-DD.jsonl` or `inspection_companies_YYYY-MM-DD.jsonl` file. Optional date override:
 
 ```text
 https://your-app.streamlit.app/?date=YYYY-MM-DD
@@ -82,12 +89,12 @@ https://your-app.streamlit.app/?date=YYYY-MM-DD
 For the simplest private deployment:
 
 1. Create a private GitHub repository.
-2. Commit the app code and selected `data/processed/*.jsonl` files you want visible.
+2. Generate and commit the selected `data/processed/inspection_companies_*.jsonl` artifact files you want visible.
 3. In Streamlit Community Cloud, create a new private app from the repository.
 4. Set the main file path to `streamlit_app.py`.
 5. Add trusted viewers in Streamlit Community Cloud.
 
-Only commit processed data that is safe for the selected viewers. Candidate files may include job descriptions, and enrichment files may include public contacts.
+Only commit processed data that is safe for the selected viewers. Do not commit `.env`, `data/raw/`, `data/exports/`, or full `job_candidates_*.jsonl` files. Candidate files may include job descriptions, and enrichment files may include public contacts.
 
 ## Tests
 

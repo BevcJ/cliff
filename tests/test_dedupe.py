@@ -204,3 +204,32 @@ def test_dedupe_keeps_distinct_personio_jobs_with_same_board_url() -> None:
     )
 
     assert len(deduped) == 2
+
+
+def test_dedupe_keeps_distinct_smartrecruiters_jobs_with_same_board_url() -> None:
+    deduped = dedupe_job_candidates(
+        [
+            _candidate(
+                source="smartrecruiters",
+                source_url="https://careers.smartrecruiters.com/acme",
+                platform_company_slug="acme",
+                platform_job_id="job-ai-engineer",
+                job_title_raw="Senior AI Engineer",
+                job_title_normalized="AI Engineer",
+                role_search_term="AI Engineer",
+                role_group="AI Execution Role",
+            ),
+            _candidate(
+                source="smartrecruiters",
+                source_url="https://careers.smartrecruiters.com/acme",
+                platform_company_slug="acme",
+                platform_job_id="job-ai-product",
+                job_title_raw="AI Product Manager",
+                job_title_normalized="AI Product Manager",
+                role_search_term="AI Product Manager",
+                role_group="AI Product Role",
+            ),
+        ]
+    )
+
+    assert len(deduped) == 2

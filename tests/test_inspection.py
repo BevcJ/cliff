@@ -4,7 +4,11 @@ import json
 
 import pytest
 
-from ai_hiring_radar.inspection import load_company_inspection_data
+from ai_hiring_radar.inspection import (
+    export_company_inspection_artifact,
+    inspection_artifact_filename,
+    load_company_inspection_data,
+)
 from ai_hiring_radar.storage_json import processed_dir, write_processed_jsonl
 
 
@@ -259,3 +263,89 @@ def test_load_company_inspection_data_counts_malformed_rows(tmp_path) -> None:
     assert dataset.counts.skipped_companies == 2
     assert dataset.counts.skipped_candidates == 2
     assert dataset.records[0]["job_count"] == 1
+
+
+def test_export_company_inspection_artifact_writes_compact_records(tmp_path) -> None:
+    write_processed_jsonl(
+        "companies_2026-07-02.jsonl",
+        [_company()],
+        data_dir=tmp_path,
+    )
+    write_processed_jsonl(
+        "job_candidates_2026-07-02.jsonl",
+        [_candidate()],
+        data_dir=tmp_path,
+    )
+    write_processed_jsonl(
+        "job_description_extracts_2026-07-02.jsonl",
+        [_jd_extract()],
+        data_dir=tmp_path,
+    )
+    write_processed_jsonl(
+        "company_enrichment_extracts_2026-07-02.jsonl",
+        [_enrichment()],
+        data_dir=tmp_path,
+    )
+
+    result = export_company_inspection_artifact("2026-07-02", data_dir=tmp_path)
+
+    assert result.path == processed_dir(data_dir=tmp_path) / inspection_artifact_filename(
+        "2026-07-02"
+    )
+    assert result.company_count == 1
+    assert result.job_count == 1
+
+    record = json.loads(result.path.read_text(encoding="utf-8"))
+    assert record["inspection_artifact_version"] == 1
+    assert record["company"] == "Acme AI"
+    assert record["company_type"] == "ai_native"
+    assert record["jobs"][0]["job_title_raw"] == "Senior AI Engineer"
+    assert record["jobs"][0]["has_description"] is True
+    assert "description" not in record["jobs"][0]
+    assert "raw_candidate_record" not in record["jobs"][0]
+    assert "raw_job_description_extract" not in record["jobs"][0]
+    assert "raw_company_record" not in record
+    assert "raw_company_enrichment_record" not in record
+
+
+def test_load_company_inspection_data_falls_back_to_artifact(tmp_path) -> None:
+    write_processed_jsonl(
+        "companies_2026-07-02.jsonl",
+        [_company()],
+        data_dir=tmp_path,
+    )
+    write_processed_jsonl(
+        "job_candidates_2026-07-02.jsonl",
+        [_candidate()],
+        data_dir=tmp_path,
+    )
+    write_processed_jsonl(
+        "job_description_extracts_2026-07-02.jsonl",
+        [_jd_extract()],
+        data_dir=tmp_path,
+    )
+    write_processed_jsonl(
+        "company_enrichment_extracts_2026-07-02.jsonl",
+        [_enrichment()],
+        data_dir=tmp_path,
+    )
+    export_company_inspection_artifact("2026-07-02", data_dir=tmp_path)
+
+    root = processed_dir(data_dir=tmp_path)
+    for filename in (
+        "companies_2026-07-02.jsonl",
+        "job_candidates_2026-07-02.jsonl",
+        "job_description_extracts_2026-07-02.jsonl",
+        "company_enrichment_extracts_2026-07-02.jsonl",
+    ):
+        (root / filename).unlink()
+
+    dataset = load_company_inspection_data("2026-07-02", data_dir=tmp_path)
+
+    assert dataset.counts.companies_loaded == 1
+    assert dataset.counts.candidates_loaded == 1
+    assert dataset.counts.job_description_extracts_loaded == 1
+    assert dataset.counts.company_enrichments_loaded == 1
+    assert dataset.missing_optional_files == []
+    assert dataset.records[0]["jobs"][0]["has_description"] is True
+    assert "description" not in dataset.records[0]["jobs"][0]

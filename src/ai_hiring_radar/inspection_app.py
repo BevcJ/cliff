@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from html import escape
 import re
 import os
 import sys
@@ -15,6 +16,14 @@ from ai_hiring_radar.storage_json import DEFAULT_DATA_DIR, processed_dir
 
 PARETO_LOGO_URL = "https://www.pareto.si/wp-content/uploads/2023/03/logo_90.png"
 COMPANIES_FILENAME_PATTERN = re.compile(r"companies_(\d{4}-\d{2}-\d{2})\.jsonl")
+INSPECTION_ARTIFACT_FILENAME_PATTERN = re.compile(
+    r"inspection_companies_(\d{4}-\d{2}-\d{2})\.jsonl"
+)
+HTML_TAG_PATTERN = re.compile(r"</?[a-zA-Z][^>]*>")
+UNSAFE_HTML_TAG_PATTERN = re.compile(
+    r"<(script|style)\b[^>]*>.*?</\1>",
+    flags=re.IGNORECASE | re.DOTALL,
+)
 WORKPLACE_MODE_OPTIONS = ["remote", "hybrid", "onsite"]
 AI_TEAM_CONTEXT_OPTIONS = ["first_ai_person", "existing_ai_team"]
 DELIVERY_CONTEXT_OPTIONS = ["internal", "external_clients", "mixed"]
@@ -57,7 +66,11 @@ FILTER_DEFAULTS = {
 
 
 def main() -> None:
-    st.set_page_config(page_title="Company Inspection", layout="wide")
+    st.set_page_config(
+        page_title="Company Inspection",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
     _apply_pareto_theme()
     _render_header()
 
@@ -65,7 +78,8 @@ def main() -> None:
     if collection_date is None:
         st.error(
             "Pass a collection date with --date YYYY-MM-DD, use ?date=YYYY-MM-DD, "
-            "or add data/processed/companies_YYYY-MM-DD.jsonl."
+            "or add data/processed/companies_YYYY-MM-DD.jsonl or "
+            "data/processed/inspection_companies_YYYY-MM-DD.jsonl."
         )
         st.stop()
         return
@@ -137,44 +151,54 @@ def _apply_pareto_theme() -> None:
             }
 
             .block-container {
-                padding-top: 0.75rem;
-                padding-bottom: 3rem;
+                max-width: 100% !important;
+                padding-top: 0.35rem;
+                padding-right: clamp(0.75rem, 1.4vw, 1.4rem);
+                padding-bottom: 2rem;
+                padding-left: clamp(0.75rem, 1.4vw, 1.4rem);
             }
 
             .pareto-header {
                 display: flex;
                 align-items: center;
-                gap: 0.7rem;
-                padding: 0.65rem 0.9rem;
-                margin-bottom: 0.8rem;
+                gap: 0.5rem;
+                min-width: 0;
+                padding: 0.38rem 0.62rem;
+                margin-bottom: 0.45rem;
                 border: 1px solid var(--pareto-border);
-                border-radius: 16px;
+                border-radius: 12px;
                 background: rgba(255, 255, 255, 0.94);
-                box-shadow: 0 10px 24px rgba(4, 95, 160, 0.06);
+                box-shadow: 0 6px 16px rgba(4, 95, 160, 0.045);
             }
 
             .pareto-header img {
-                width: 36px;
-                height: 36px;
-                border-radius: 11px;
+                flex: 0 0 auto;
+                width: 28px;
+                height: 28px;
+                border-radius: 8px;
             }
 
             .pareto-eyebrow {
                 display: inline-block;
-                margin: 0 0 0.08rem;
+                flex: 0 0 auto;
+                margin: 0 0.2rem 0 0;
                 color: var(--pareto-purple);
-                font-size: 0.64rem;
+                font-size: 0.58rem;
                 font-weight: 900;
-                letter-spacing: 0.16em;
+                letter-spacing: 0.14em;
                 text-transform: uppercase;
+                white-space: nowrap;
             }
 
             .pareto-title {
-                margin: 0;
+                flex: 0 0 auto;
+                margin: 0 !important;
                 color: var(--pareto-ink);
-                font-size: 1.45rem;
-                line-height: 1.05;
-                font-weight: 900;
+                font-size: 1.28rem !important;
+                line-height: 1 !important;
+                font-weight: 900 !important;
+                letter-spacing: -0.02em;
+                white-space: nowrap;
             }
 
             .pareto-title span {
@@ -182,9 +206,25 @@ def _apply_pareto_theme() -> None:
             }
 
             .pareto-subtitle {
-                margin: 0.12rem 0 0;
+                flex: 1 1 auto;
+                min-width: 8rem;
+                overflow: hidden;
+                margin: 0 0 0 0.35rem;
                 color: var(--pareto-muted);
-                font-size: 0.84rem;
+                font-size: 0.76rem;
+                line-height: 1.1;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            @media (max-width: 1180px) {
+                .pareto-subtitle {
+                    display: none;
+                }
+
+                .pareto-title {
+                    font-size: 1.16rem !important;
+                }
             }
 
             h2, h3, h4 {
@@ -192,12 +232,23 @@ def _apply_pareto_theme() -> None:
                 font-weight: 900 !important;
             }
 
+            h2 {
+                margin-top: 0.6rem !important;
+                margin-bottom: 0.35rem !important;
+                font-size: 1.55rem !important;
+            }
+
+            h3 {
+                margin-top: 0.55rem !important;
+                margin-bottom: 0.3rem !important;
+            }
+
             div[data-testid="stMetric"] {
-                padding: 0.78rem 0.9rem;
+                padding: 0.5rem 0.65rem;
                 border: 1px solid var(--pareto-border);
-                border-radius: 16px;
+                border-radius: 12px;
                 background: var(--pareto-card);
-                box-shadow: 0 10px 24px rgba(23, 32, 51, 0.045);
+                box-shadow: 0 6px 16px rgba(23, 32, 51, 0.035);
             }
 
             div[data-testid="stMetricLabel"] p {
@@ -208,32 +259,91 @@ def _apply_pareto_theme() -> None:
             div[data-testid="stMetricValue"] {
                 color: var(--pareto-blue);
                 font-weight: 900;
+                font-size: 1.9rem !important;
+            }
+
+            .pareto-metrics {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+                gap: 0.55rem;
+                margin: 0.35rem 0 0.75rem;
+            }
+
+            .pareto-metric-card {
+                min-width: 0;
+                padding: 0.5rem 0.62rem;
+                border: 1px solid var(--pareto-border);
+                border-radius: 12px;
+                background: var(--pareto-card);
+                box-shadow: 0 6px 16px rgba(23, 32, 51, 0.035);
+            }
+
+            .pareto-metric-label {
+                overflow: hidden;
+                margin: 0;
+                color: var(--pareto-ink);
+                font-size: 0.74rem;
+                font-weight: 800;
+                line-height: 1.15;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .pareto-metric-value {
+                margin: 0.12rem 0 0;
+                color: var(--pareto-blue);
+                font-size: 1.55rem;
+                font-weight: 900;
+                line-height: 1;
+                letter-spacing: -0.035em;
             }
 
             section[data-testid="stSidebar"] {
+                width: 18.5rem !important;
+                min-width: 18.5rem !important;
+                max-width: 18.5rem !important;
                 background: #ffffff;
                 border-right: 1px solid var(--pareto-border);
+            }
+
+            section[data-testid="stSidebar"] > div {
+                width: 18.5rem !important;
+                padding-right: 0.85rem;
+                padding-left: 0.85rem;
             }
 
             section[data-testid="stSidebar"] label,
             label[data-testid="stWidgetLabel"] p {
                 color: var(--pareto-ink) !important;
+                font-size: 0.88rem;
                 font-weight: 800;
+                line-height: 1.15;
+            }
+
+            section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] {
+                gap: 0.48rem;
+            }
+
+            section[data-testid="stSidebar"] div[data-testid="stWidgetLabel"] {
+                margin-bottom: 0.1rem;
             }
 
             section[data-testid="stSidebar"] h2,
             section[data-testid="stSidebar"] h3 {
                 color: var(--pareto-blue);
+                font-size: 1.25rem !important;
+                margin-bottom: 0.35rem !important;
             }
 
             div[data-baseweb="select"] > div,
             div[data-baseweb="input"] > div,
             div[data-baseweb="textarea"] textarea {
+                min-height: 2.35rem !important;
                 background: #ffffff !important;
                 color: var(--pareto-ink) !important;
                 border: 1px solid var(--pareto-border) !important;
-                border-radius: 12px !important;
-                box-shadow: 0 6px 16px rgba(23, 32, 51, 0.035);
+                border-radius: 10px !important;
+                box-shadow: 0 4px 12px rgba(23, 32, 51, 0.03);
             }
 
             div[data-baseweb="select"] > div:hover,
@@ -277,7 +387,8 @@ def _apply_pareto_theme() -> None:
                 background: linear-gradient(90deg, var(--pareto-pink), var(--pareto-orange));
                 color: #ffffff;
                 font-weight: 900;
-                box-shadow: 0 10px 24px rgba(251, 67, 95, 0.22);
+                padding: 0.38rem 0.78rem;
+                box-shadow: 0 7px 18px rgba(251, 67, 95, 0.18);
             }
 
             .stButton > button:hover {
@@ -288,10 +399,10 @@ def _apply_pareto_theme() -> None:
 
             div[data-testid="stDataFrame"] {
                 border: 1px solid var(--pareto-border);
-                border-radius: 16px;
+                border-radius: 12px;
                 overflow: hidden;
                 background: var(--pareto-card);
-                box-shadow: 0 10px 28px rgba(23, 32, 51, 0.045);
+                box-shadow: 0 6px 18px rgba(23, 32, 51, 0.035);
             }
 
             div[data-testid="stDataFrame"] * {
@@ -310,9 +421,56 @@ def _apply_pareto_theme() -> None:
                 background: rgba(255, 255, 255, 0.86);
             }
 
+            .job-description-card {
+                max-height: 460px;
+                overflow: auto;
+                padding: 1rem 1.1rem;
+                border: 1px solid var(--pareto-border);
+                border-radius: 16px;
+                background: #ffffff;
+                color: var(--pareto-ink);
+                box-shadow: 0 8px 20px rgba(23, 32, 51, 0.04);
+                font-size: 0.95rem;
+                line-height: 1.62;
+            }
+
+            .job-description-card h1,
+            .job-description-card h2,
+            .job-description-card h3,
+            .job-description-card h4 {
+                margin: 1rem 0 0.45rem;
+                color: var(--pareto-blue);
+                font-weight: 900;
+            }
+
+            .job-description-card p,
+            .job-description-card ul,
+            .job-description-card ol {
+                margin: 0 0 0.75rem;
+            }
+
+            .job-description-card ul,
+            .job-description-card ol {
+                padding-left: 1.35rem;
+            }
+
+            .job-description-card a {
+                color: var(--pareto-blue);
+            }
+
             a {
                 color: var(--pareto-blue);
                 font-weight: 700;
+            }
+
+            .pareto-url-list {
+                margin: 0.1rem 0 0.7rem;
+                padding-left: 1.15rem;
+            }
+
+            .pareto-url-list li {
+                margin-bottom: 0.18rem;
+                overflow-wrap: anywhere;
             }
 
             .stCaptionContainer, .stMarkdown p {
@@ -329,11 +487,9 @@ def _render_header() -> None:
         f"""
         <div class="pareto-header">
             <img src="{PARETO_LOGO_URL}" alt="Pareto AI logo" />
-            <div>
-                <p class="pareto-eyebrow">Pareto AI</p>
-                <h1 class="pareto-title">Company <span>Inspection</span></h1>
-                <p class="pareto-subtitle">Compact hiring signal review for AI product and delivery opportunities.</p>
-            </div>
+            <p class="pareto-eyebrow">Pareto AI</p>
+            <h1 class="pareto-title">Company <span>Inspection</span></h1>
+            <p class="pareto-subtitle">Compact hiring signal review for AI product and delivery opportunities.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -364,10 +520,11 @@ def _latest_collection_date(*, data_dir: Path = DEFAULT_DATA_DIR) -> str | None:
         return None
 
     dates: list[str] = []
-    for path in root.glob("companies_*.jsonl"):
-        match = COMPANIES_FILENAME_PATTERN.fullmatch(path.name)
-        if match is not None:
-            dates.append(match.group(1))
+    for path in root.glob("*.jsonl"):
+        for pattern in (COMPANIES_FILENAME_PATTERN, INSPECTION_ARTIFACT_FILENAME_PATTERN):
+            match = pattern.fullmatch(path.name)
+            if match is not None:
+                dates.append(match.group(1))
     return max(dates) if dates else None
 
 
@@ -376,70 +533,73 @@ def _sidebar_filters(records: list[dict[str, Any]]) -> dict[str, Any]:
     if st.sidebar.button("Clear filters"):
         _clear_filter_state()
 
-    return {
-        "workplace_modes": st.sidebar.multiselect(
-            "Workplace mode",
-            [*WORKPLACE_MODE_OPTIONS, MISSING_FILTER_OPTION],
-            key="filter_workplace_modes",
-        ),
-        "ai_team_contexts": st.sidebar.multiselect(
-            "AI team context",
-            [*AI_TEAM_CONTEXT_OPTIONS, MISSING_FILTER_OPTION],
-            key="filter_ai_team_contexts",
-        ),
-        "delivery_contexts": st.sidebar.multiselect(
-            "Delivery context",
-            [*DELIVERY_CONTEXT_OPTIONS, MISSING_FILTER_OPTION],
-            key="filter_delivery_contexts",
-        ),
-        "company_types": st.sidebar.multiselect(
-            "Company type",
-            [*COMPANY_TYPE_OPTIONS, MISSING_FILTER_OPTION],
-            key="filter_company_types",
-        ),
-        "company_sizes": st.sidebar.multiselect(
-            "Company size",
-            _company_size_options(records, include_missing=True),
-            key="filter_company_sizes",
-        ),
-        "countries": st.sidebar.multiselect(
-            "Country",
-            _list_options(records, "countries", include_missing=True),
-            key="filter_countries",
-        ),
-        "role_classifications": st.sidebar.multiselect(
-            "Role classification",
-            _options(records, "role_classification", include_missing=True),
-            key="filter_role_classifications",
-        ),
-        "sources": st.sidebar.multiselect(
-            "Source/platform",
-            _source_options(records, include_missing=True),
-            key="filter_sources",
-        ),
-        "ai_tech_forward_signals": st.sidebar.multiselect(
-            "AI tech-forward signal",
-            _options(records, "ai_tech_forward_signal", include_missing=True),
-            key="filter_ai_tech_forward_signals",
-        ),
-        "has_contacts": st.sidebar.selectbox(
-            "Has contacts", BOOLEAN_FILTER_OPTIONS, key="filter_has_contacts"
-        ),
-        "has_job_description_extracts": st.sidebar.selectbox(
-            "Has job-description extracts",
-            BOOLEAN_FILTER_OPTIONS,
-            key="filter_has_job_description_extracts",
-        ),
-        "has_company_enrichment": st.sidebar.selectbox(
-            "Has company enrichment",
-            BOOLEAN_FILTER_OPTIONS,
-            key="filter_has_company_enrichment",
-        ),
-        "search": st.sidebar.text_input(
-            "Search company, titles, industry, description",
-            key="filter_search",
-        ).strip(),
-    }
+    with st.sidebar.form("inspection_filters"):
+        filters = {
+            "workplace_modes": st.multiselect(
+                "Workplace mode",
+                [*WORKPLACE_MODE_OPTIONS, MISSING_FILTER_OPTION],
+                key="filter_workplace_modes",
+            ),
+            "ai_team_contexts": st.multiselect(
+                "AI team context",
+                [*AI_TEAM_CONTEXT_OPTIONS, MISSING_FILTER_OPTION],
+                key="filter_ai_team_contexts",
+            ),
+            "delivery_contexts": st.multiselect(
+                "Delivery context",
+                [*DELIVERY_CONTEXT_OPTIONS, MISSING_FILTER_OPTION],
+                key="filter_delivery_contexts",
+            ),
+            "company_types": st.multiselect(
+                "Company type",
+                [*COMPANY_TYPE_OPTIONS, MISSING_FILTER_OPTION],
+                key="filter_company_types",
+            ),
+            "company_sizes": st.multiselect(
+                "Company size",
+                _company_size_options(records, include_missing=True),
+                key="filter_company_sizes",
+            ),
+            "countries": st.multiselect(
+                "Country",
+                _list_options(records, "countries", include_missing=True),
+                key="filter_countries",
+            ),
+            "role_classifications": st.multiselect(
+                "Role classification",
+                _options(records, "role_classification", include_missing=True),
+                key="filter_role_classifications",
+            ),
+            "sources": st.multiselect(
+                "Source/platform",
+                _source_options(records, include_missing=True),
+                key="filter_sources",
+            ),
+            "ai_tech_forward_signals": st.multiselect(
+                "AI tech-forward signal",
+                _options(records, "ai_tech_forward_signal", include_missing=True),
+                key="filter_ai_tech_forward_signals",
+            ),
+            "has_contacts": st.selectbox(
+                "Has contacts", BOOLEAN_FILTER_OPTIONS, key="filter_has_contacts"
+            ),
+            "has_job_description_extracts": st.selectbox(
+                "Has job-description extracts",
+                BOOLEAN_FILTER_OPTIONS,
+                key="filter_has_job_description_extracts",
+            ),
+            "has_company_enrichment": st.selectbox(
+                "Has company enrichment",
+                BOOLEAN_FILTER_OPTIONS,
+                key="filter_has_company_enrichment",
+            ),
+            "search": st.text_input(
+                "Search company, titles, industry, description",
+                key="filter_search",
+            ).strip(),
+        }
+        st.form_submit_button("Apply filters")
+    return filters
 
 
 def _clear_filter_state() -> None:
@@ -502,13 +662,19 @@ def _render_summary(
     total_jobs = sum(int(record.get("job_count") or 0) for record in dataset.records)
 
     st.caption(f"Collection date: {dataset.collection_date}")
-    columns = st.columns(6)
-    columns[0].metric("Companies", counts.companies_loaded)
-    columns[1].metric("Filtered", filtered_company_count)
-    columns[2].metric("Jobs", total_jobs)
-    columns[3].metric("JD extracts", counts.job_description_extracts_loaded)
-    columns[4].metric("Enrichments", counts.company_enrichments_loaded)
-    columns[5].metric("Missing optional", len(dataset.missing_optional_files))
+    metrics = [
+        ("Companies", counts.companies_loaded),
+        ("Filtered", filtered_company_count),
+        ("Jobs", total_jobs),
+        ("JD extracts", counts.job_description_extracts_loaded),
+        ("Enrichments", counts.company_enrichments_loaded),
+        ("Missing optional", len(dataset.missing_optional_files)),
+    ]
+    metric_cards = "".join(_metric_card(label, value) for label, value in metrics)
+    st.markdown(
+        f'<div class="pareto-metrics">{metric_cards}</div>',
+        unsafe_allow_html=True,
+    )
 
     skipped = {
         "companies": counts.skipped_companies,
@@ -524,6 +690,21 @@ def _render_summary(
 def _render_missing_file_warnings(dataset: CompanyInspectionDataset) -> None:
     for path in dataset.missing_optional_files:
         st.warning(f"Optional file missing: {path.as_posix()}")
+
+
+def _metric_card(label: str, value: object) -> str:
+    return (
+        '<div class="pareto-metric-card">'
+        f'<p class="pareto-metric-label">{escape(label)}</p>'
+        f'<p class="pareto-metric-value">{escape(_metric_value(value))}</p>'
+        "</div>"
+    )
+
+
+def _metric_value(value: object) -> str:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return f"{value:,}"
+    return str(value)
 
 
 def _sort_controls() -> tuple[str, bool]:
@@ -556,6 +737,9 @@ def _render_company_table(records: list[dict[str, Any]]) -> dict[str, Any] | Non
         on_select="rerun",
         selection_mode="single-row",
         column_config=_company_table_column_config(),
+        column_order=_company_table_column_order(),
+        height=360,
+        row_height=30,
     )
     st.caption("Click a company row to inspect it below. Column headers can also sort the table.")
     return _selected_record_from_event(records, event)
@@ -564,14 +748,17 @@ def _render_company_table(records: list[dict[str, Any]]) -> dict[str, Any] | Non
 def _render_company_detail(record: dict[str, Any] | None) -> None:
     st.subheader("Company Detail")
     if record is None:
-        st.info("Select broader filters to inspect company details.")
+        st.info("Select a company row to inspect details.")
         return
 
     _render_company_facts(record)
     _render_jobs(record)
     _render_contacts(record)
     _render_evidence(record)
-    with st.expander("Raw inspection JSON", expanded=False):
+    if st.checkbox(
+        "Show raw inspection JSON",
+        key=f"raw-company-{_widget_key_part(record.get('company_key'), record.get('company'))}",
+    ):
         st.json(record)
 
 
@@ -634,26 +821,40 @@ def _render_jobs(record: dict[str, Any]) -> None:
         use_container_width=True,
         hide_index=True,
     )
-    for index, job in enumerate(jobs, start=1):
-        title = _display(job.get("job_title_raw") or job.get("job_id") or f"Job {index}")
-        with st.expander(title, expanded=False):
-            st.write(_job_table_row(job))
-            _render_urls("Job URLs", [job.get("job_url"), job.get("source_url")])
-            if job.get("contacts"):
-                st.markdown("#### Job Contacts")
-                st.dataframe(job["contacts"], use_container_width=True, hide_index=True)
-            if job.get("description"):
-                st.markdown("#### Description")
-                st.text_area(
-                    "Full job description",
-                    value=str(job["description"]),
-                    height=260,
-                    disabled=True,
-                    label_visibility="collapsed",
-                    key=f"description-{record.get('company_key')}-{index}",
-                )
-            with st.expander("Raw job JSON", expanded=False):
-                st.json(job)
+    selected_index = st.selectbox(
+        "Inspect job",
+        range(len(jobs)),
+        format_func=lambda index: _job_option_label(jobs[index], index + 1),
+        key=f"job-detail-{_widget_key_part(record.get('company_key'), record.get('company'))}",
+    )
+    _render_job_detail(record, jobs[int(selected_index)], int(selected_index) + 1)
+
+
+def _render_job_detail(record: dict[str, Any], job: dict[str, Any], index: int) -> None:
+    title = _display(job.get("job_title_raw") or job.get("job_id") or f"Job {index}")
+    st.markdown(f"#### {title}")
+    st.write(_job_table_row(job))
+    _render_urls("Job URLs", [job.get("job_url"), job.get("source_url")])
+    if job.get("contacts"):
+        st.markdown("#### Job Contacts")
+        st.dataframe(job["contacts"], use_container_width=True, hide_index=True)
+    key_prefix = f"{_widget_key_part(record.get('company_key'), record.get('company'))}-{index}"
+    if job.get("description"):
+        if st.checkbox(
+            "Show full job description",
+            key=f"description-{key_prefix}",
+        ):
+            st.markdown("#### Description")
+            _render_job_description(job)
+        else:
+            st.caption("Full job description is hidden by default for performance.")
+    elif job.get("has_description"):
+        st.caption("Full job description is not included in compact deployment data.")
+    if st.checkbox(
+        "Show raw job JSON",
+        key=f"raw-job-{key_prefix}",
+    ):
+        st.json(job)
 
 
 def _render_contacts(record: dict[str, Any]) -> None:
@@ -674,8 +875,32 @@ def _render_urls(label: str, values: list[Any]) -> None:
     if not urls:
         return
     st.markdown(f"#### {label}")
-    for url in urls:
-        st.markdown(f"- {url}")
+    items = "".join(f"<li>{_url_link_html(url)}</li>" for url in urls)
+    st.markdown(f'<ul class="pareto-url-list">{items}</ul>', unsafe_allow_html=True)
+
+
+def _url_link_html(value: object) -> str:
+    url = str(value or "").strip()
+    if not url:
+        return ""
+    if not _is_http_url(url):
+        return escape(url)
+    safe_url = escape(url, quote=True)
+    return (
+        f'<a href="{safe_url}" target="_blank" rel="noopener noreferrer">'
+        f"{escape(_url_label(url))}</a>"
+    )
+
+
+def _is_http_url(value: str) -> bool:
+    return value.startswith(("http://", "https://"))
+
+
+def _url_label(url: str) -> str:
+    label = re.sub(r"^https?://", "", url).rstrip("/")
+    if len(label) <= 96:
+        return label
+    return f"{label[:93]}..."
 
 
 def _company_table_row(record: dict[str, Any]) -> dict[str, Any]:
@@ -699,7 +924,6 @@ def _company_table_row(record: dict[str, Any]) -> dict[str, Any]:
 def _job_table_row(job: dict[str, Any]) -> dict[str, Any]:
     return {
         "Title": job.get("job_title_raw"),
-        "Normalized Title": job.get("job_title_normalized"),
         "Role Group": job.get("role_group"),
         "Platform": job.get("platform"),
         "Country": job.get("country"),
@@ -716,30 +940,81 @@ def _job_table_row(job: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _render_job_description(job: dict[str, Any]) -> None:
+    html = _job_description_html(job.get("description"))
+    if html:
+        st.html(html)
+
+
+def _job_description_html(value: object | None) -> str:
+    description = str(value or "").strip()
+    if not description:
+        return ""
+
+    description = UNSAFE_HTML_TAG_PATTERN.sub("", description)
+    if _looks_like_html(description):
+        body = description
+    else:
+        body = f"<p>{escape(description).replace(chr(10), '<br>')}</p>"
+    return f'<div class="job-description-card">{body}</div>'
+
+
+def _looks_like_html(value: str) -> bool:
+    return HTML_TAG_PATTERN.search(value) is not None
+
+
 def _company_option_label(record: dict[str, Any]) -> str:
     company = _display(record.get("company"))
     job_count = int(record.get("job_count") or 0)
     return f"{company} ({job_count} job{'s' if job_count != 1 else ''})"
 
 
+def _job_option_label(job: dict[str, Any], index: int) -> str:
+    title = _display(job.get("job_title_raw") or job.get("job_id") or f"Job {index}")
+    platform = _display(job.get("platform"))
+    if platform == "Unknown":
+        return title
+    return f"{title} - {platform}"
+
+
+def _widget_key_part(*values: object | None) -> str:
+    cleaned = "-".join(_display(value) for value in values if _display(value) != "Unknown")
+    key = re.sub(r"[^a-zA-Z0-9_-]+", "-", cleaned).strip("-").lower()
+    return key or "unknown"
+
+
 def _company_table_column_config() -> dict[str, Any]:
     return {
-        "Company": st.column_config.TextColumn("Company", width="medium"),
-        "Countries": st.column_config.TextColumn("Countries", width="small"),
-        "Role Classification": st.column_config.TextColumn(
-            "Role Classification", width="medium"
-        ),
-        "Jobs": st.column_config.NumberColumn("Jobs", width="small"),
-        "JD Extracts": st.column_config.NumberColumn("JD Extracts", width="small"),
-        "Workplace Modes": st.column_config.TextColumn("Workplace", width="small"),
-        "AI Team Contexts": st.column_config.TextColumn("AI Team", width="small"),
-        "Delivery Contexts": st.column_config.TextColumn("Delivery", width="small"),
-        "Company Type": st.column_config.TextColumn("Type", width="small"),
-        "Company Size": st.column_config.TextColumn("Size", width="small"),
-        "AI Signal": st.column_config.TextColumn("AI Signal", width="small"),
-        "Sources": st.column_config.TextColumn("Sources", width="small"),
-        "Has Contacts": st.column_config.CheckboxColumn("Contacts", width="small"),
+        "Company": st.column_config.TextColumn("Company", width=170),
+        "Countries": st.column_config.TextColumn("Countries", width=112),
+        "Role Classification": st.column_config.TextColumn("Role", width=145),
+        "Jobs": st.column_config.NumberColumn("Jobs", width=54),
+        "JD Extracts": st.column_config.NumberColumn("JDs", width=58),
+        "Workplace Modes": st.column_config.TextColumn("Workplace", width=88),
+        "AI Team Contexts": st.column_config.TextColumn("AI Team", width=96),
+        "Delivery Contexts": st.column_config.TextColumn("Delivery", width=88),
+        "Company Type": st.column_config.TextColumn("Type", width=112),
+        "Company Size": st.column_config.TextColumn("Size", width=68),
+        "AI Signal": st.column_config.TextColumn("AI Signal", width=82),
+        "Sources": st.column_config.TextColumn("Sources", width=82),
+        "Has Contacts": st.column_config.CheckboxColumn("Contacts", width=76),
     }
+
+
+def _company_table_column_order() -> tuple[str, ...]:
+    return (
+        "Company",
+        "Countries",
+        "Role Classification",
+        "Jobs",
+        "JD Extracts",
+        "Workplace Modes",
+        "AI Team Contexts",
+        "Delivery Contexts",
+        "Company Type",
+        "Company Size",
+        "AI Signal",
+    )
 
 
 def _selected_record_from_event(
@@ -753,7 +1028,7 @@ def _selected_record_from_event(
         selected_index = int(selected_rows[0])
         if 0 <= selected_index < len(records):
             return records[selected_index]
-    return records[0]
+    return None
 
 
 def _sort_records(

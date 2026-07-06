@@ -58,11 +58,6 @@ class PydanticAIJobDescriptionExtractor:
         extraction_input: dict[str, Any],
     ) -> LLMCallResult[JobDescriptionExtraction]:
         result = self.agent.run_sync(_build_prompt(extraction_input))
-        print("input:")
-        print(extraction_input)
-        print("output:")
-        print(result.output)
-        print("--------------------------------")
         return LLMCallResult(
             output=JobDescriptionExtraction.model_validate(result.output),
             usage=usage_from_run_usage(getattr(result, "usage", None)),

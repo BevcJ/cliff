@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from ai_hiring_radar.hashing import normalize_hash_part
-from ai_hiring_radar.storage_json import DEFAULT_DATA_DIR, format_date, processed_dir
+from ai_hiring_radar.storage_json import (
+    DEFAULT_DATA_DIR,
+    format_date,
+    processed_dir,
+    write_processed_jsonl,
+)
 
 
 @dataclass(frozen=True)
@@ -40,6 +45,16 @@ class CompanyInspectionDataset:
     counts: InspectionLoadCounts
 
 
+@dataclass(frozen=True)
+class InspectionArtifactResult:
+    collection_date: str
+    path: Path
+    company_count: int
+    job_count: int
+
+
+INSPECTION_ARTIFACT_VERSION = 1
+INSPECTION_ARTIFACT_PREFIX = "inspection_companies_"
 COMPANY_ENRICHMENT_FIELDS = (
     "company_description",
     "company_description_source_urls",
@@ -70,8 +85,122 @@ ENRICHMENT_SOURCE_URL_FIELDS = (
     "source_urls",
 )
 
+ARTIFACT_COMPANY_FIELDS = (
+    "record_type",
+    "company",
+    "company_key",
+    "countries",
+    "role_classification",
+    "ai_execution_titles",
+    "ai_product_titles",
+    "ai_role_title_counts",
+    "matched_search_terms",
+    "evidence_urls",
+    "sources",
+    "evidence_quality",
+    "needs_review",
+    "review_status",
+    "why_interesting",
+    "company_description",
+    "company_source_urls",
+    "industry",
+    "company_size",
+    "founded_year",
+    "company_type",
+    "funding_summary",
+    "ai_tech_forward_signal",
+    "ai_tech_forward_reason",
+    "workplace_modes",
+    "ai_team_contexts",
+    "delivery_contexts",
+    "company_contacts",
+    "job_contacts",
+    "contacts",
+    "job_count",
+    "job_description_extract_count",
+    "has_company_enrichment",
+    "has_job_description_extracts",
+    "has_contacts",
+)
+
+ARTIFACT_JOB_FIELDS = (
+    "job_id",
+    "job_title_raw",
+    "job_title_normalized",
+    "role_group",
+    "role_search_term",
+    "job_url",
+    "source_url",
+    "platform",
+    "source",
+    "country",
+    "location",
+    "team",
+    "department",
+    "employment_type",
+    "workplace_type",
+    "workplace_mode",
+    "ai_team_context",
+    "delivery_context",
+    "contacts",
+    "posted_at",
+    "updated_at",
+    "has_description",
+    "has_job_description_extract",
+)
+
 
 def load_company_inspection_data(
+    collection_date: str,
+    *,
+    data_dir: Path = DEFAULT_DATA_DIR,
+) -> CompanyInspectionDataset:
+    normalized_date = format_date(collection_date)
+    paths = _inspection_input_paths(normalized_date, data_dir=data_dir)
+    if paths.companies_path.exists():
+        return _load_full_company_inspection_data(normalized_date, data_dir=data_dir)
+
+    artifact_path = inspection_artifact_path(normalized_date, data_dir=data_dir)
+    if artifact_path.exists():
+        return _load_inspection_artifact_data(normalized_date, data_dir=data_dir)
+
+    return _load_full_company_inspection_data(normalized_date, data_dir=data_dir)
+
+
+def export_company_inspection_artifact(
+    collection_date: str,
+    *,
+    data_dir: Path = DEFAULT_DATA_DIR,
+) -> InspectionArtifactResult:
+    normalized_date = format_date(collection_date)
+    dataset = _load_full_company_inspection_data(normalized_date, data_dir=data_dir)
+    records = [_compact_inspection_record(record) for record in dataset.records]
+    path = write_processed_jsonl(
+        inspection_artifact_filename(normalized_date),
+        records,
+        data_dir=data_dir,
+    )
+    return InspectionArtifactResult(
+        collection_date=normalized_date,
+        path=path,
+        company_count=len(records),
+        job_count=sum(len(record.get("jobs") or []) for record in records),
+    )
+
+
+def inspection_artifact_filename(collection_date: str) -> str:
+    return f"{INSPECTION_ARTIFACT_PREFIX}{format_date(collection_date)}.jsonl"
+
+
+def inspection_artifact_path(
+    collection_date: str,
+    *,
+    data_dir: Path = DEFAULT_DATA_DIR,
+) -> Path:
+    return processed_dir(data_dir=data_dir) / inspection_artifact_filename(collection_date)
+
+
+def _load_full_company_inspection_data(
     collection_date: str,
     *,
     data_dir: Path = DEFAULT_DATA_DIR,
@@ -118,6 +247,69 @@ def load_company_inspection_data(
             skipped_company_enrichments=skipped_company_enrichments,
         ),
     )
+
+
+def _load_inspection_artifact_data(
+    collection_date: str,
+    *,
+    data_dir: Path = DEFAULT_DATA_DIR,
+) -> CompanyInspectionDataset:
+    normalized_date = format_date(collection_date)
+    paths = _inspection_input_paths(normalized_date, data_dir=data_dir)
+    records, skipped = _read_required_dict_jsonl(
+        inspection_artifact_path(normalized_date, data_dir=data_dir)
+    )
+    job_count = sum(len(record.get("jobs") or []) for record in records)
+    job_description_extract_count = sum(
+        int(record.get("job_description_extract_count") or 0) for record in records
+    )
+    company_enrichment_count = sum(
+        1 for record in records if record.get("has_company_enrichment")
+    )
+
+    return CompanyInspectionDataset(
+        collection_date=normalized_date,
+        records=records,
+        paths=paths,
+        missing_optional_files=[],
+        counts=InspectionLoadCounts(
+            companies_loaded=len(records),
+            candidates_loaded=job_count,
+            job_description_extracts_loaded=job_description_extract_count,
+            company_enrichments_loaded=company_enrichment_count,
+            skipped_companies=skipped,
+        ),
+    )
+
+
+def _compact_inspection_record(record: dict[str, Any]) -> dict[str, Any]:
+    compact = _compact_mapping(record, ARTIFACT_COMPANY_FIELDS)
+    compact["inspection_artifact_version"] = INSPECTION_ARTIFACT_VERSION
+    compact["jobs"] = [
+        _compact_job_record(job)
+        for job in record.get("jobs") or []
+        if isinstance(job, dict)
+    ]
+    return compact
+
+
+def _compact_job_record(job: dict[str, Any]) -> dict[str, Any]:
+    return _compact_mapping(job, ARTIFACT_JOB_FIELDS)
+
+
+def _compact_mapping(
+    record: dict[str, Any],
+    fields: tuple[str, ...],
+) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for field in fields:
+        if field not in record:
+            continue
+        value = record[field]
+        if value is None or value == [] or value == {}:
+            continue
+        compact[field] = value
+    return compact
 
 
 def _inspection_input_paths(collection_date: str, *, data_dir: Path) -> InspectionInputPaths:
