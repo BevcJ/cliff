@@ -13,6 +13,8 @@ def _filters(**overrides):  # noqa: ANN001, ANN202 - compact test fixture helper
         "delivery_contexts": [],
         "company_types": [],
         "company_sizes": [],
+        "min_jobs": None,
+        "max_jobs": None,
         "countries": [],
         "role_classifications": [],
         "sources": [],
@@ -148,6 +150,28 @@ def test_apply_filters_supports_missing_scalar_filter_values() -> None:
     assert [record["company"] for record in filtered] == ["Missing size"]
 
 
+def test_apply_filters_supports_max_job_count_filter() -> None:
+    records = [
+        _record(company="Small pipeline", job_count=9),
+        _record(company="Large pipeline", job_count=10),
+    ]
+
+    filtered = inspection_app._apply_filters(records, _filters(max_jobs=9))
+
+    assert [record["company"] for record in filtered] == ["Small pipeline"]
+
+
+def test_apply_filters_supports_min_job_count_filter() -> None:
+    records = [
+        _record(company="Small pipeline", job_count=2),
+        _record(company="Large pipeline", job_count=10),
+    ]
+
+    filtered = inspection_app._apply_filters(records, _filters(min_jobs=3))
+
+    assert [record["company"] for record in filtered] == ["Large pipeline"]
+
+
 def test_apply_filters_supports_missing_source_filter_values() -> None:
     records = [
         _record(company="With source", sources=["lever"]),
@@ -235,6 +259,13 @@ def test_sort_records_supports_jobs_ascending() -> None:
     sorted_records = inspection_app._sort_records(records, "job_count", descending=False)
 
     assert [record["company"] for record in sorted_records] == ["Acme", "Beta"]
+
+
+def test_company_table_column_order_hides_jd_extracts() -> None:
+    column_order = inspection_app._company_table_column_order()
+
+    assert "Jobs" in column_order
+    assert "JD Extracts" not in column_order
 
 
 def test_selected_record_from_event_uses_clicked_row() -> None:

@@ -54,6 +54,8 @@ FILTER_DEFAULTS = {
     "filter_delivery_contexts": [],
     "filter_company_types": [],
     "filter_company_sizes": [],
+    "filter_min_jobs": None,
+    "filter_max_jobs": None,
     "filter_countries": [],
     "filter_role_classifications": [],
     "filter_sources": [],
@@ -560,6 +562,23 @@ def _sidebar_filters(records: list[dict[str, Any]]) -> dict[str, Any]:
                 _company_size_options(records, include_missing=True),
                 key="filter_company_sizes",
             ),
+            "min_jobs": st.number_input(
+                "Min job posts",
+                min_value=0,
+                value=None,
+                step=1,
+                placeholder="Any",
+                key="filter_min_jobs",
+            ),
+            "max_jobs": st.number_input(
+                "Max job posts",
+                min_value=0,
+                value=None,
+                step=1,
+                placeholder="Any",
+                key="filter_max_jobs",
+                help="Use 9 for fewer than 10 job posts.",
+            ),
             "countries": st.multiselect(
                 "Country",
                 _list_options(records, "countries", include_missing=True),
@@ -622,6 +641,12 @@ def _apply_filters(
         if not _matches_scalar_filter(record, "company_type", filters["company_types"]):
             continue
         if not _matches_scalar_filter(record, "company_size", filters["company_sizes"]):
+            continue
+        if not _matches_job_count_filter(
+            record,
+            filters.get("min_jobs"),
+            filters.get("max_jobs"),
+        ):
             continue
         if not _matches_list_filter(record, "countries", filters["countries"]):
             continue
@@ -1007,7 +1032,6 @@ def _company_table_column_order() -> tuple[str, ...]:
         "Countries",
         "Role Classification",
         "Jobs",
-        "JD Extracts",
         "Workplace Modes",
         "AI Team Contexts",
         "Delivery Contexts",
@@ -1100,6 +1124,29 @@ def _matches_boolean_filter(record: dict[str, Any], field: str, selected_value: 
         return True
     value = bool(record.get(field))
     return value is (selected_value == "Yes")
+
+
+def _matches_job_count_filter(
+    record: dict[str, Any], min_jobs: object | None, max_jobs: object | None
+) -> bool:
+    job_count = _integer_value(record.get("job_count")) or 0
+    min_value = _integer_value(min_jobs)
+    max_value = _integer_value(max_jobs)
+    if min_value is not None and job_count < min_value:
+        return False
+    if max_value is not None and job_count > max_value:
+        return False
+    return True
+
+
+def _integer_value(value: object | None) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return None
 
 
 def _has_overlap(values: list[str], selected_values: list[str]) -> bool:
