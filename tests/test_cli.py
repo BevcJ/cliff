@@ -109,9 +109,60 @@ def test_extract_job_descriptions_dry_run_does_not_create_extractor(monkeypatch)
     assert calls[0]["extractor"] is None
     assert calls[0]["model"] == "config-model"
     assert calls[0]["limit"] == 3
+    assert calls[0]["country_codes"] is None
+    assert calls[0]["country_names"] is None
     assert calls[0]["dry_run"] is True
     assert "Job description extraction dry run" in result.output
     assert "2 processable" in result.output
+
+
+def test_extract_job_descriptions_passes_country_filter(monkeypatch) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def fake_runner(collection_date: str, **kwargs: Any) -> JobDescriptionExtractionRunResult:
+        calls.append({"collection_date": collection_date, **kwargs})
+        return _result(dry_run=True, model=kwargs["model"])
+
+    def fail_extractor(**_: Any) -> None:
+        raise AssertionError("dry run must not create the Pydantic AI extractor")
+
+    monkeypatch.setattr(cli, "load_settings", _settings)
+    monkeypatch.setattr(cli, "PydanticAIJobDescriptionExtractor", fail_extractor)
+    monkeypatch.setattr(cli, "run_job_description_extraction", fake_runner)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "extract-job-descriptions",
+            "--date",
+            "2026-07-02",
+            "--countries",
+            "nl,dk",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls[0]["country_codes"] == ["nl", "dk"]
+    assert calls[0]["country_names"] == ["Netherlands", "Denmark"]
+    assert calls[0]["dry_run"] is True
+
+
+def test_extract_job_descriptions_rejects_unknown_country_filter() -> None:
+    result = runner.invoke(
+        cli.app,
+        [
+            "extract-job-descriptions",
+            "--date",
+            "2026-07-02",
+            "--countries",
+            "se",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "Unknown country code(s): se" in result.output
 
 
 def test_extract_job_descriptions_uses_model_override(monkeypatch) -> None:

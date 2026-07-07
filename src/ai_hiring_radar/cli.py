@@ -1774,6 +1774,13 @@ def extract_job_descriptions(
             help="Limit candidates examined for a small extraction run.",
         ),
     ] = None,
+    countries: Annotated[
+        str | None,
+        typer.Option(
+            "--countries",
+            help="Only extract jobs matching any comma-separated country code, for example: nl,dk.",
+        ),
+    ] = None,
     model: Annotated[
         str | None,
         typer.Option(
@@ -1805,6 +1812,15 @@ def extract_job_descriptions(
 ) -> None:
     """Extract structured datapoints from processed job descriptions."""
     collection_date = _parse_iso_date(date_value)
+    country_codes = None
+    country_names = None
+    if countries is not None:
+        countries_config = load_countries_config()
+        country_codes = _parse_country_codes(countries)
+        country_names = [
+            countries_config.countries[country_code].name for country_code in country_codes
+        ]
+
     settings = load_settings()
     model_name = (
         model
@@ -1833,6 +1849,8 @@ def extract_job_descriptions(
             extractor=extractor,
             model=model_name,
             limit=limit,
+            country_codes=country_codes,
+            country_names=country_names,
             dry_run=dry_run,
             show_progress=show_progress,
             restart=restart,

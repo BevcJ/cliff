@@ -42,6 +42,8 @@ def run_job_description_extraction(
     model: str,
     data_dir: Path = DEFAULT_DATA_DIR,
     limit: int | None = None,
+    country_codes: list[str] | None = None,
+    country_names: list[str] | None = None,
     dry_run: bool = False,
     clock: Callable[[], str] = utc_now_iso,
     show_progress: bool = True,
@@ -51,7 +53,12 @@ def run_job_description_extraction(
     input_filename = f"job_candidates_{normalized_date}.jsonl"
     output_filename = f"job_description_extracts_{normalized_date}.jsonl"
     raw_records = read_processed_jsonl(input_filename, data_dir=data_dir)
-    records_to_process = raw_records[:limit] if limit is not None else raw_records
+    filtered_records = _filter_candidate_records_by_country(
+        raw_records,
+        country_codes=country_codes,
+        country_names=country_names,
+    )
+    records_to_process = filtered_records[:limit] if limit is not None else filtered_records
     output_path = processed_dir(data_dir=data_dir) / output_filename
 
     if not dry_run and extractor is None:
@@ -96,6 +103,82 @@ def run_job_description_extraction(
         llm_pricing_missing_models=tuple(sorted(run_state.llm_pricing_missing_models)),
         dry_run=dry_run,
     )
+
+
+def _filter_candidate_records_by_country(
+    records: list[Any],
+    *,
+    country_codes: list[str] | None,
+    country_names: list[str] | None,
+) -> list[Any]:
+    if not country_codes and not country_names:
+        return records
+
+    selected_country_codes = _normalized_country_values(country_codes)
+    selected_country_names = _normalized_country_values(country_names)
+    if not selected_country_codes and not selected_country_names:
+        return records
+
+    return [
+        record
+        for record in records
+        if isinstance(record, dict)
+        and _candidate_record_matches_country(
+            record,
+            selected_country_codes=selected_country_codes,
+            selected_country_names=selected_country_names,
+        )
+    ]
+
+
+def _normalized_country_values(values: list[str] | None) -> set[str]:
+    return {
+        value.casefold()
+        for value in (clean_scalar(item) for item in values or [])
+        if value is not None
+    }
+
+
+def _candidate_record_matches_country(
+    record: dict[str, Any],
+    *,
+    selected_country_codes: set[str],
+    selected_country_names: set[str],
+) -> bool:
+    return _record_has_selected_country_value(
+        record,
+        fields=("job_country_codes", "country_code"),
+        selected_values=selected_country_codes,
+    ) or _record_has_selected_country_value(
+        record,
+        fields=("job_countries", "country"),
+        selected_values=selected_country_names,
+    )
+
+
+def _record_has_selected_country_value(
+    record: dict[str, Any],
+    *,
+    fields: tuple[str, ...],
+    selected_values: set[str],
+) -> bool:
+    if not selected_values:
+        return False
+
+    for field in fields:
+        for value in _record_country_values(record.get(field)):
+            if value.casefold() in selected_values:
+                return True
+    return False
+
+
+def _record_country_values(value: object | None) -> list[str]:
+    raw_values = value if isinstance(value, (list, tuple, set)) else (value,)
+    return [
+        cleaned
+        for cleaned in (clean_scalar(item) for item in raw_values)
+        if cleaned is not None
+    ]
 
 
 class _RunState:

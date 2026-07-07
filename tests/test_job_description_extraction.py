@@ -331,6 +331,59 @@ def test_run_job_description_extraction_resumes_existing_output(tmp_path) -> Non
     assert records[1]["workplace_mode"] == "hybrid"
 
 
+def test_run_job_description_extraction_filters_by_any_country_before_limit(
+    tmp_path,
+) -> None:
+    write_processed_jsonl(
+        "job_candidates_2026-07-02.jsonl",
+        [
+            _candidate(
+                job_id="uk-job",
+                job_country_codes=["uk"],
+                job_countries=["United Kingdom"],
+            ),
+            _candidate(
+                job_id="dk-code-job",
+                job_country_codes=["dk"],
+                job_countries=[],
+            ),
+            _candidate(
+                job_id="nl-name-job",
+                job_country_codes=[],
+                job_countries=["Netherlands"],
+            ),
+        ],
+        data_dir=tmp_path,
+    )
+    calls: list[str] = []
+
+    def fake_extractor(extraction_input: dict[str, Any]) -> dict[str, Any]:
+        calls.append(extraction_input["job_id"])
+        return {"workplace_mode": "hybrid"}
+
+    result = run_job_description_extraction(
+        "2026-07-02",
+        extractor=fake_extractor,
+        model="test-model",
+        data_dir=tmp_path,
+        country_codes=["dk", "nl"],
+        country_names=["Denmark", "Netherlands"],
+        limit=2,
+        clock=lambda: "2026-07-02T10:00:00Z",
+        show_progress=False,
+    )
+
+    assert calls == ["dk-code-job", "nl-name-job"]
+    assert result.candidates_read == 2
+    assert result.processable_count == 2
+    assert result.extracted_count == 2
+    records = read_jsonl(result.output_path)
+    assert [record["job_id"] for record in records] == [
+        "dk-code-job",
+        "nl-name-job",
+    ]
+
+
 def test_run_job_description_extraction_restart_replaces_existing_output(
     tmp_path,
 ) -> None:
