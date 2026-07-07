@@ -9,7 +9,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import streamlit as st
+from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder
 
 from ai_hiring_radar.inspection import CompanyInspectionDataset, load_company_inspection_data
 from ai_hiring_radar.review_state import (
@@ -26,6 +28,9 @@ from ai_hiring_radar.storage_json import DEFAULT_DATA_DIR, processed_dir
 PARETO_LOGO_URL = "https://www.pareto.si/wp-content/uploads/2023/03/logo_90.png"
 REVIEW_STATE_DATABASE_URL_ENV = "AI_HIRING_RADAR_REVIEW_STATE_DATABASE_URL"
 REVIEW_STATE_CONNECTION_SECRET = "supabase_review_state"
+WORKFLOW_VIEW_OPTIONS = ("Inspect", "Shortlist", "Outreach", "Rejected")
+EDITABLE_REVIEW_TABLE_COLUMNS = ("Fit Status", "Outreach Status")
+HIDDEN_GRID_COLUMNS = ("Grid Row Key", "Company Key", "Review Notes")
 COMPANIES_FILENAME_PATTERN = re.compile(r"companies_(\d{4}-\d{2}-\d{2})\.jsonl")
 INSPECTION_ARTIFACT_FILENAME_PATTERN = re.compile(
     r"inspection_companies_(\d{4}-\d{2}-\d{2})\.jsonl"
@@ -162,11 +167,8 @@ def main() -> None:
         review_state_status=review_state_status,
         filtered_company_count=len(filtered_records),
     )
-    sort_field, descending = _sort_controls()
-    _render_workflow_tabs(
+    _render_companies_workspace(
         filtered_records,
-        sort_field=sort_field,
-        descending=descending,
         review_state_status=review_state_status,
         reviewer_name=reviewer_name,
         collection_date=dataset.collection_date,
@@ -928,60 +930,74 @@ def _metric_value(value: object) -> str:
     return str(value)
 
 
-def _sort_controls() -> tuple[str, bool]:
-    st.subheader("Companies")
-    columns = st.columns([2, 1])
-    sort_label = columns[0].selectbox(
-        "Sort by",
-        list(SORT_FIELDS),
-        index=0,
-        key="company_sort_field",
-    )
-    direction = columns[1].selectbox(
-        "Direction",
-        ["Descending", "Ascending"],
-        index=0,
-        key="company_sort_direction",
-    )
-    return SORT_FIELDS[sort_label], direction == "Descending"
-
-
-def _render_workflow_tabs(
+def _render_companies_workspace(
     records: list[dict[str, Any]],
     *,
-    sort_field: str,
-    descending: bool,
     review_state_status: ReviewStateBackendStatus,
     reviewer_name: str,
     collection_date: str,
 ) -> None:
-    tab_records = [
-        ("Inspect", records),
-        ("Shortlist", _shortlist_records(records)),
-        ("Outreach", _outreach_records(records)),
-        ("Rejected", _rejected_records(records)),
-    ]
-    tabs = st.tabs([label for label, _ in tab_records])
-    for tab, (label, tab_record_values) in zip(tabs, tab_records, strict=True):
-        with tab:
-            st.caption(f"{len(tab_record_values)} company record(s)")
-            sorted_records = _sort_records(
-                tab_record_values,
-                sort_field,
-                descending=descending,
-            )
-            scope = _widget_key_part(label)
-            selected_record = _render_company_table(
-                sorted_records,
-                key=f"{scope}-company-table",
-            )
-            _render_company_detail(
-                selected_record,
-                review_state_status=review_state_status,
-                reviewer_name=reviewer_name,
-                collection_date=collection_date,
-                scope=scope,
-            )
+    st.subheader("Companies")
+    workflow_view, sort_field, descending = _company_workspace_controls(records)
+    visible_records = _workflow_records(records, workflow_view)
+    sorted_records = _sort_records(visible_records, sort_field, descending=descending)
+    scope = _widget_key_part(workflow_view)
+
+    st.caption(f"{len(sorted_records)} company record(s)")
+    selected_record = _render_company_table(
+        sorted_records,
+        key=f"{scope}-company-table",
+        review_state_status=review_state_status,
+        reviewer_name=reviewer_name,
+        collection_date=collection_date,
+    )
+    _render_company_detail(
+        selected_record,
+        review_state_status=review_state_status,
+        reviewer_name=reviewer_name,
+        collection_date=collection_date,
+        scope=scope,
+    )
+
+
+def _company_workspace_controls(records: list[dict[str, Any]]) -> tuple[str, str, bool]:
+    workflow_column, sort_column, direction_column = st.columns([5.8, 1.45, 1.25])
+    workflow_view = workflow_column.segmented_control(
+        "Workflow",
+        WORKFLOW_VIEW_OPTIONS,
+        default="Inspect",
+        format_func=lambda value: _workflow_label(str(value), records),
+        key="company_workflow_view",
+    )
+    sort_label = sort_column.selectbox(
+        "Sort",
+        list(SORT_FIELDS),
+        index=0,
+        key="company_sort_field",
+    )
+    direction = direction_column.selectbox(
+        "Dir",
+        ["Descending", "Ascending"],
+        index=0,
+        key="company_sort_direction",
+    )
+    return str(workflow_view or "Inspect"), SORT_FIELDS[sort_label], direction == "Descending"
+
+
+def _workflow_label(workflow_view: str, records: list[dict[str, Any]]) -> str:
+    return f"{workflow_view} ({len(_workflow_records(records, workflow_view))})"
+
+
+def _workflow_records(
+    records: list[dict[str, Any]], workflow_view: str
+) -> list[dict[str, Any]]:
+    if workflow_view == "Shortlist":
+        return _shortlist_records(records)
+    if workflow_view == "Outreach":
+        return _outreach_records(records)
+    if workflow_view == "Rejected":
+        return _rejected_records(records)
+    return records
 
 
 def _shortlist_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1008,25 +1024,255 @@ def _render_company_table(
     records: list[dict[str, Any]],
     *,
     key: str = "company-table",
+    review_state_status: ReviewStateBackendStatus,
+    reviewer_name: str,
+    collection_date: str,
 ) -> dict[str, Any] | None:
     if not records:
         st.info("No companies match the current filters.")
         return None
 
-    event = st.dataframe(
-        [_company_table_row(record) for record in records],
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        column_config=_company_table_column_config(),
-        column_order=_company_table_column_order(),
+    grid_rows = _company_grid_rows(records)
+    grid_result = AgGrid(
+        pd.DataFrame(grid_rows),
+        gridOptions=_company_grid_options(
+            grid_rows,
+            editable=review_state_status.enabled,
+        ),
         height=360,
-        row_height=30,
+        data_return_mode=DataReturnMode.AS_INPUT,
+        update_on=["cellValueChanged", "selectionChanged"],
+        allow_unsafe_jscode=False,
+        theme="streamlit",
         key=key,
+        show_search=False,
+        show_download_button=False,
     )
-    st.caption("Click a company row to inspect it below. Column headers can also sort the table.")
-    return _selected_record_from_event(records, event)
+    st.caption(
+        "Click a company row to inspect it below. Edit Fit or Outreach directly in the table."
+    )
+    selected_record = _selected_record_from_grid_result(records, grid_result)
+    changes = _status_changes_from_grid_data(
+        records,
+        _grid_data_rows(_grid_result_data(grid_result)),
+    )
+    if not changes:
+        return selected_record
+    if not review_state_status.database_url:
+        st.error("Review-state database URL is not configured.")
+        return selected_record
+
+    try:
+        _save_table_status_changes(
+            changes,
+            database_url=review_state_status.database_url,
+            reviewer_name=reviewer_name,
+            collection_date=collection_date,
+        )
+    except Exception as exc:
+        st.error(f"Failed to save table edit: {exc}")
+        return selected_record
+
+    st.session_state["selected_company_key"] = changes[-1].get(
+        "grid_row_key",
+        changes[-1]["company_key"],
+    )
+    count_label = "status update" if len(changes) == 1 else "status updates"
+    st.session_state["review_state_save_message"] = (
+        f"Saved {len(changes)} {count_label}."
+    )
+    st.rerun()
+    return selected_record
+
+
+def _company_grid_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_company_grid_row(record, index) for index, record in enumerate(records)]
+
+
+def _company_grid_row(record: dict[str, Any], index: int) -> dict[str, Any]:
+    row = _company_table_row(record)
+    row["Grid Row Key"] = _record_grid_key(record, index)
+    row["Company Key"] = str(record.get("company_key") or "").strip()
+    row["Review Notes"] = str(record.get("review_notes") or "")
+    return row
+
+
+def _record_grid_key(record: dict[str, Any], index: int) -> str:
+    company_key = str(record.get("company_key") or "").strip()
+    return company_key or f"__row_{index}"
+
+
+def _company_grid_options(
+    grid_rows: list[dict[str, Any]],
+    *,
+    editable: bool,
+) -> dict[str, Any]:
+    builder = GridOptionsBuilder.from_dataframe(pd.DataFrame(grid_rows))
+    builder.configure_default_column(
+        editable=False,
+        filter=False,
+        resizable=True,
+        sortable=False,
+    )
+    builder.configure_selection(
+        selection_mode="single",
+        use_checkbox=False,
+        pre_selected_rows=_pre_selected_grid_rows(grid_rows),
+        suppressRowDeselection=True,
+        suppressRowClickSelection=False,
+    )
+    for column in HIDDEN_GRID_COLUMNS:
+        builder.configure_column(column, hide=True)
+    builder.configure_column("Company", pinned="left", width=190)
+    builder.configure_column(
+        "Fit Status",
+        editable=editable,
+        cellEditor="agSelectCellEditor",
+        cellEditorParams={"values": list(FIT_STATUS_OPTIONS)},
+        singleClickEdit=True,
+        width=130,
+    )
+    builder.configure_column(
+        "Outreach Status",
+        editable=editable,
+        cellEditor="agSelectCellEditor",
+        cellEditorParams={"values": list(OUTREACH_STATUS_OPTIONS)},
+        singleClickEdit=True,
+        width=150,
+    )
+    builder.configure_column("Jobs", type=["numericColumn"], width=72)
+    options = builder.build()
+    options["rowSelection"] = "single"
+    options["suppressRowClickSelection"] = False
+    return options
+
+
+def _pre_selected_grid_rows(grid_rows: list[dict[str, Any]]) -> list[int]:
+    selected_key = str(st.session_state.get("selected_company_key") or "")
+    for index, row in enumerate(grid_rows):
+        if row.get("Grid Row Key") == selected_key:
+            return [index]
+    return [0] if grid_rows else []
+
+
+def _status_changes_from_grid_data(
+    records: list[dict[str, Any]],
+    grid_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    changes: list[dict[str, Any]] = []
+    records_by_grid_key = {
+        _record_grid_key(record, index): record for index, record in enumerate(records)
+    }
+    for row in grid_rows:
+        grid_key = str(row.get("Grid Row Key") or "")
+        record = records_by_grid_key.get(grid_key)
+        if record is None:
+            continue
+        company_key = str(record.get("company_key") or "").strip()
+        if not company_key:
+            continue
+        current_fit_status = str(record.get("fit_status") or "unreviewed")
+        current_outreach_status = str(record.get("outreach_status") or "not_started")
+        fit_status = str(row.get("Fit Status") or current_fit_status)
+        outreach_status = str(row.get("Outreach Status") or current_outreach_status)
+        if (
+            fit_status == current_fit_status
+            and outreach_status == current_outreach_status
+        ):
+            continue
+        changes.append(
+            {
+                "grid_row_key": grid_key,
+                "company_key": company_key,
+                "company": str(record.get("company") or ""),
+                "fit_status": fit_status,
+                "outreach_status": outreach_status,
+                "notes": str(record.get("review_notes") or ""),
+            }
+        )
+    return changes
+
+
+def _grid_result_data(grid_result: Any) -> Any:
+    if isinstance(grid_result, dict):
+        return grid_result.get("data")
+    return getattr(grid_result, "data", None)
+
+
+def _grid_data_rows(grid_data: Any) -> list[dict[str, Any]]:
+    if isinstance(grid_data, pd.DataFrame):
+        return grid_data.to_dict("records")
+    if isinstance(grid_data, list):
+        return [row for row in grid_data if isinstance(row, dict)]
+    if isinstance(grid_data, dict):
+        data = grid_data.get("data")
+        if isinstance(data, list):
+            return [row for row in data if isinstance(row, dict)]
+    return []
+
+
+def _selected_record_from_grid_result(
+    records: list[dict[str, Any]], grid_result: Any
+) -> dict[str, Any] | None:
+    selected_key = _selected_grid_row_key(grid_result)
+    if selected_key is not None:
+        st.session_state["selected_company_key"] = selected_key
+        selected = _record_for_grid_key(records, selected_key)
+        if selected is not None:
+            return selected
+
+    persisted_key = str(st.session_state.get("selected_company_key") or "")
+    if persisted_key:
+        selected = _record_for_grid_key(records, persisted_key)
+        if selected is not None:
+            return selected
+    return records[0] if records else None
+
+
+def _selected_grid_row_key(grid_result: Any) -> str | None:
+    selected_rows = _grid_result_selected_rows(grid_result)
+    rows = _grid_data_rows(selected_rows)
+    if not rows and isinstance(selected_rows, list):
+        rows = [row for row in selected_rows if isinstance(row, dict)]
+    if not rows:
+        return None
+    row_key = str(rows[0].get("Grid Row Key") or "").strip()
+    return row_key or None
+
+
+def _grid_result_selected_rows(grid_result: Any) -> Any:
+    if isinstance(grid_result, dict):
+        return grid_result.get("selected_rows")
+    return getattr(grid_result, "selected_rows", None)
+
+
+def _record_for_grid_key(
+    records: list[dict[str, Any]], grid_key: str
+) -> dict[str, Any] | None:
+    for index, record in enumerate(records):
+        if _record_grid_key(record, index) == grid_key:
+            return record
+    return None
+
+
+def _save_table_status_changes(
+    changes: list[dict[str, Any]],
+    *,
+    database_url: str,
+    reviewer_name: str,
+    collection_date: str,
+) -> None:
+    for change in changes:
+        payload = build_review_state_payload(
+            company_key=str(change.get("company_key") or ""),
+            company=str(change.get("company") or ""),
+            fit_status=str(change.get("fit_status") or ""),
+            outreach_status=str(change.get("outreach_status") or ""),
+            notes=str(change.get("notes") or ""),
+            collection_date=collection_date,
+            reviewer_name=reviewer_name,
+        )
+        upsert_review_state(payload, database_url=database_url)
 
 
 def _render_company_detail(
@@ -1143,15 +1389,16 @@ def _render_review_form(
     form_key = f"review-state-{_widget_key_part(scope, company_key, record.get('company'))}"
     fit_options = list(FIT_STATUS_OPTIONS)
     outreach_options = list(OUTREACH_STATUS_OPTIONS)
-    with st.form(form_key):
-        fit_status = st.selectbox(
+    with st.form(form_key, border=False):
+        status_columns = st.columns(2)
+        fit_status = status_columns[0].selectbox(
             "Fit status",
             fit_options,
             index=_option_index(fit_options, record.get("fit_status")),
             disabled=disabled,
             key=f"{form_key}-fit-status",
         )
-        outreach_status = st.selectbox(
+        outreach_status = status_columns[1].selectbox(
             "Outreach status",
             outreach_options,
             index=_option_index(outreach_options, record.get("outreach_status")),
@@ -1162,9 +1409,10 @@ def _render_review_form(
             "Notes",
             value=str(record.get("review_notes") or ""),
             disabled=disabled,
+            height=88,
             key=f"{form_key}-notes",
         )
-        submitted = st.form_submit_button("Save review state", disabled=disabled)
+        submitted = st.form_submit_button("Save notes/status", disabled=disabled)
 
     if not submitted:
         return
@@ -1408,8 +1656,16 @@ def _widget_key_part(*values: object | None) -> str:
 def _company_table_column_config() -> dict[str, Any]:
     return {
         "Company": st.column_config.TextColumn("Company", width=170),
-        "Fit Status": st.column_config.TextColumn("Fit", width=106),
-        "Outreach Status": st.column_config.TextColumn("Outreach", width=122),
+        "Fit Status": st.column_config.SelectboxColumn(
+            "Fit",
+            options=list(FIT_STATUS_OPTIONS),
+            width=116,
+        ),
+        "Outreach Status": st.column_config.SelectboxColumn(
+            "Outreach",
+            options=list(OUTREACH_STATUS_OPTIONS),
+            width=132,
+        ),
         "Countries": st.column_config.TextColumn("Countries", width=112),
         "Role Classification": st.column_config.TextColumn("Role", width=145),
         "Jobs": st.column_config.NumberColumn("Jobs", width=54),
@@ -1440,20 +1696,6 @@ def _company_table_column_order() -> tuple[str, ...]:
         "Company Size",
         "AI Signal",
     )
-
-
-def _selected_record_from_event(
-    records: list[dict[str, Any]], event: Any
-) -> dict[str, Any] | None:
-    if not records:
-        return None
-
-    selected_rows = getattr(getattr(event, "selection", None), "rows", [])
-    if selected_rows:
-        selected_index = int(selected_rows[0])
-        if 0 <= selected_index < len(records):
-            return records[selected_index]
-    return None
 
 
 def _sort_records(

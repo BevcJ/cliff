@@ -359,6 +359,30 @@ def test_rejected_records_returns_not_interesting_only() -> None:
     assert [record["company"] for record in rejected] == ["Rejected"]
 
 
+def test_workflow_records_routes_to_selected_workflow() -> None:
+    records = [
+        _record(company="Best", fit_status="best_fit", outreach_status="not_started"),
+        _record(company="Sent", fit_status="possible_fit", outreach_status="message_sent"),
+        _record(company="Rejected", fit_status="not_interesting"),
+    ]
+
+    assert [record["company"] for record in inspection_app._workflow_records(records, "Inspect")] == [
+        "Best",
+        "Sent",
+        "Rejected",
+    ]
+    assert [record["company"] for record in inspection_app._workflow_records(records, "Shortlist")] == [
+        "Best",
+        "Sent",
+    ]
+    assert [record["company"] for record in inspection_app._workflow_records(records, "Outreach")] == [
+        "Sent"
+    ]
+    assert [record["company"] for record in inspection_app._workflow_records(records, "Rejected")] == [
+        "Rejected"
+    ]
+
+
 def test_company_table_column_order_hides_jd_extracts() -> None:
     column_order = inspection_app._company_table_column_order()
 
@@ -377,32 +401,162 @@ def test_company_table_row_includes_review_state_columns() -> None:
     assert row["Outreach Status"] == "message_sent"
 
 
-def test_selected_record_from_event_uses_clicked_row() -> None:
-    records = [_record(company="Acme"), _record(company="Beta")]
-    event = SimpleNamespace(selection=SimpleNamespace(rows=[1]))
-
-    selected = inspection_app._selected_record_from_event(records, event)
-
-    assert selected is not None
-    assert selected["company"] == "Beta"
-
-
-def test_selected_record_from_event_returns_none_without_selection() -> None:
-    records = [_record(company="Acme"), _record(company="Beta")]
-    event = SimpleNamespace(selection=SimpleNamespace(rows=[]))
-
-    selected = inspection_app._selected_record_from_event(records, event)
-
-    assert selected is None
+def _column_def(options: dict[str, object], field: str) -> dict[str, object]:
+    column_defs = options["columnDefs"]
+    assert isinstance(column_defs, list)
+    for column in column_defs:
+        if isinstance(column, dict) and column.get("field") == field:
+            return column
+    raise AssertionError(f"Missing column definition for {field}")
 
 
-def test_selected_record_from_event_returns_none_when_selection_is_out_of_range() -> None:
-    records = [_record(company="Acme")]
-    event = SimpleNamespace(selection=SimpleNamespace(rows=[9]))
+def test_company_grid_row_includes_hidden_stable_keys() -> None:
+    row = inspection_app._company_grid_row(
+        _record(company="Acme", company_key="acme ai", review_notes="Note"),
+        0,
+    )
 
-    selected = inspection_app._selected_record_from_event(records, event)
+    assert row["Grid Row Key"] == "acme ai"
+    assert row["Company Key"] == "acme ai"
+    assert row["Review Notes"] == "Note"
 
-    assert selected is None
+
+def test_company_grid_options_makes_review_columns_editable_only_when_enabled() -> None:
+    rows = inspection_app._company_grid_rows([_record()])
+
+    editable_options = inspection_app._company_grid_options(rows, editable=True)
+    readonly_options = inspection_app._company_grid_options(rows, editable=False)
+
+    assert _column_def(editable_options, "Fit Status")["editable"] is True
+    assert _column_def(editable_options, "Outreach Status")["editable"] is True
+    assert _column_def(editable_options, "Company").get("editable") is not True
+    assert _column_def(readonly_options, "Fit Status")["editable"] is False
+    assert _column_def(readonly_options, "Outreach Status")["editable"] is False
+    assert _column_def(editable_options, "Grid Row Key")["hide"] is True
+
+
+def test_status_changes_from_grid_data_detects_changed_status_values() -> None:
+    records = [
+        _record(company="Acme", company_key="acme ai"),
+        _record(
+            company="Beta",
+            company_key="beta ai",
+            fit_status="best_fit",
+            outreach_status="message_sent",
+            review_notes="Existing note.",
+        ),
+    ]
+    grid_rows = inspection_app._company_grid_rows(records)
+    grid_rows[0]["Fit Status"] = "possible_fit"
+    grid_rows[1]["Outreach Status"] = "follow_up_needed"
+
+    changes = inspection_app._status_changes_from_grid_data(records, grid_rows)
+
+    assert changes == [
+        {
+            "grid_row_key": "acme ai",
+            "company_key": "acme ai",
+            "company": "Acme",
+            "fit_status": "possible_fit",
+            "outreach_status": "not_started",
+            "notes": "",
+        },
+        {
+            "grid_row_key": "beta ai",
+            "company_key": "beta ai",
+            "company": "Beta",
+            "fit_status": "best_fit",
+            "outreach_status": "follow_up_needed",
+            "notes": "Existing note.",
+        },
+    ]
+
+
+def test_status_changes_from_grid_data_ignores_unchanged_and_missing_keys() -> None:
+    records = [_record(company="Acme", fit_status="best_fit")]
+    grid_rows = inspection_app._company_grid_rows(records)
+    grid_rows[0]["Company"] = "Changed in browser"
+
+    assert inspection_app._status_changes_from_grid_data(records, grid_rows) == []
+
+    missing_key_records = [_record(company="No Key", company_key="")]
+    missing_key_rows = inspection_app._company_grid_rows(missing_key_records)
+    missing_key_rows[0]["Fit Status"] = "possible_fit"
+
+    assert inspection_app._status_changes_from_grid_data(missing_key_records, missing_key_rows) == []
+
+
+def test_save_table_status_changes_calls_upsert_with_expected_payload(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_upsert(payload: dict[str, object], *, database_url: str) -> dict[str, object]:
+        calls.append({"payload": payload, "database_url": database_url})
+        return payload
+
+    monkeypatch.setattr(inspection_app, "upsert_review_state", fake_upsert)
+
+    inspection_app._save_table_status_changes(
+        [
+            {
+                "company_key": "acme ai",
+                "company": "Acme AI",
+                "fit_status": "best_fit",
+                "outreach_status": "message_sent",
+                "notes": "Strong signal.",
+            }
+        ],
+        database_url="postgres://test",
+        reviewer_name="Jakob",
+        collection_date="2026-07-07",
+    )
+
+    assert calls[0]["database_url"] == "postgres://test"
+    payload = calls[0]["payload"]
+    assert isinstance(payload, dict)
+    assert payload["company_key"] == "acme ai"
+    assert payload["fit_status"] == "best_fit"
+    assert payload["outreach_status"] == "message_sent"
+    assert payload["notes"] == "Strong signal."
+    assert payload["last_seen_collection_date"] == "2026-07-07"
+    assert payload["last_updated_by"] == "Jakob"
+    assert payload["inspected_at"] is not None
+
+
+def test_selected_record_from_grid_result_uses_clicked_row(monkeypatch) -> None:
+    records = [
+        _record(company="Acme", company_key="acme ai"),
+        _record(company="Beta", company_key="beta ai"),
+    ]
+    monkeypatch.setitem(inspection_app.st.session_state, "selected_company_key", "")
+    result = SimpleNamespace(selected_rows=[{"Grid Row Key": "beta ai"}])
+
+    selected = inspection_app._selected_record_from_grid_result(records, result)
+
+    assert selected == records[1]
+    assert inspection_app.st.session_state["selected_company_key"] == "beta ai"
+
+
+def test_selected_record_from_grid_result_falls_back_to_persisted_selection(monkeypatch) -> None:
+    records = [_record(company="Acme", company_key="acme ai"), _record(company="Beta", company_key="beta ai")]
+    monkeypatch.setitem(inspection_app.st.session_state, "selected_company_key", "beta ai")
+    result = SimpleNamespace(selected_rows=[])
+
+    selected = inspection_app._selected_record_from_grid_result(
+        records=records,
+        grid_result=result,
+    )
+
+    assert selected == records[1]
+
+
+def test_selected_record_from_grid_result_defaults_to_first_visible_row(monkeypatch) -> None:
+    records = [_record(company="Acme", company_key="acme ai"), _record(company="Beta", company_key="beta ai")]
+    monkeypatch.setitem(inspection_app.st.session_state, "selected_company_key", "missing")
+    result = SimpleNamespace(selected_rows=[])
+
+    selected = inspection_app._selected_record_from_grid_result(records, result)
+
+    assert selected == records[0]
 
 
 def test_load_review_state_for_records_queries_unique_company_keys(monkeypatch) -> None:
