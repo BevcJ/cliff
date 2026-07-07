@@ -489,7 +489,7 @@ def discover_ashby(
             "--countries",
             help="Comma-separated country codes for Ashby board discovery.",
         ),
-    ] = "nl",
+    ] = "nl,uk,dk",
     limit: Annotated[
         int | None,
         typer.Option(
@@ -584,7 +584,7 @@ def collect_ashby(
             "--countries",
             help="Comma-separated country codes for Ashby board discovery.",
         ),
-    ] = "nl",
+    ] = "nl,uk,dk",
     board_url: Annotated[
         list[str] | None,
         typer.Option(
@@ -716,7 +716,7 @@ def discover_greenhouse(
             "--countries",
             help="Comma-separated country codes for Greenhouse board discovery.",
         ),
-    ] = "nl",
+    ] = "nl,uk,dk",
     limit: Annotated[
         int | None,
         typer.Option(
@@ -811,7 +811,7 @@ def collect_greenhouse(
             "--countries",
             help="Comma-separated country codes for Greenhouse board discovery.",
         ),
-    ] = "nl",
+    ] = "nl,uk,dk",
     board_url: Annotated[
         list[str] | None,
         typer.Option(
@@ -943,7 +943,7 @@ def discover_lever(
             "--countries",
             help="Comma-separated country codes for Lever board discovery.",
         ),
-    ] = "nl",
+    ] = "nl,uk,dk",
     limit: Annotated[
         int | None,
         typer.Option(
@@ -1038,7 +1038,7 @@ def collect_lever(
             "--countries",
             help="Comma-separated country codes for Lever board discovery.",
         ),
-    ] = "nl",
+    ] = "nl,uk,dk",
     board_url: Annotated[
         list[str] | None,
         typer.Option(
@@ -1170,7 +1170,7 @@ def discover_personio(
             "--countries",
             help="Comma-separated country codes for Personio board discovery.",
         ),
-    ] = "nl",
+    ] = "nl,uk,dk",
     limit: Annotated[
         int | None,
         typer.Option(
@@ -1265,7 +1265,7 @@ def collect_personio(
             "--countries",
             help="Comma-separated country codes for Personio board discovery.",
         ),
-    ] = "nl",
+    ] = "nl,uk,dk",
     board_url: Annotated[
         list[str] | None,
         typer.Option(
@@ -1404,7 +1404,7 @@ def discover_smartrecruiters(
             "--countries",
             help="Comma-separated country codes for SmartRecruiters board discovery.",
         ),
-    ] = "nl",
+    ] = "nl,uk,dk",
     limit: Annotated[
         int | None,
         typer.Option(
@@ -1499,7 +1499,7 @@ def collect_smartrecruiters(
             "--countries",
             help="Comma-separated country codes for SmartRecruiters board discovery.",
         ),
-    ] = "nl",
+    ] = "nl,uk,dk",
     board_url: Annotated[
         list[str] | None,
         typer.Option(

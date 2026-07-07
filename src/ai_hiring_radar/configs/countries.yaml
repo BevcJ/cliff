@@ -44,9 +44,65 @@ countries:
     search_location: United Kingdom
     gl: uk
     hl: en
+    search_locations:
+      - label: United Kingdom
+        query_location: United Kingdom
+        serper_location: United Kingdom
+      - label: London
+        query_location: London United Kingdom
+        serper_location: London, England, United Kingdom
+      - label: Manchester
+        query_location: Manchester United Kingdom
+        serper_location: Manchester, England, United Kingdom
+      - label: Birmingham
+        query_location: Birmingham United Kingdom
+        serper_location: Birmingham, England, United Kingdom
+      - label: Leeds
+        query_location: Leeds United Kingdom
+        serper_location: Leeds, England, United Kingdom
+      - label: Cambridge
+        query_location: Cambridge United Kingdom
+        serper_location: Cambridge, England, United Kingdom
+      - label: Oxford
+        query_location: Oxford United Kingdom
+        serper_location: Oxford, England, United Kingdom
+      - label: Bristol
+        query_location: Bristol United Kingdom
+        serper_location: Bristol, England, United Kingdom
+      - label: Edinburgh
+        query_location: Edinburgh United Kingdom
+        serper_location: Edinburgh, Scotland, United Kingdom
+      - label: Glasgow
+        query_location: Glasgow United Kingdom
+        serper_location: Glasgow, Scotland, United Kingdom
+      - label: Belfast
+        query_location: Belfast United Kingdom
+        serper_location: Belfast, Northern Ireland, United Kingdom
+      - label: Remote United Kingdom
+        query_location: Remote United Kingdom
+        serper_location: United Kingdom
 
   dk:
     name: Denmark
     search_location: Denmark
     gl: dk
     hl: en
+    search_locations:
+      - label: Denmark
+        query_location: Denmark
+        serper_location: Denmark
+      - label: Copenhagen
+        query_location: Copenhagen Denmark
+        serper_location: Copenhagen, Capital Region of Denmark, Denmark
+      - label: Aarhus
+        query_location: Aarhus Denmark
+        serper_location: Aarhus, Central Denmark Region, Denmark
+      - label: Odense
+        query_location: Odense Denmark
+        serper_location: Odense, Region of Southern Denmark, Denmark
+      - label: Aalborg
+        query_location: Aalborg Denmark
+        serper_location: Aalborg, North Denmark Region, Denmark
+      - label: Remote Denmark
+        query_location: Remote Denmark
+        serper_location: Denmark
