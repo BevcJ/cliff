@@ -9,7 +9,7 @@ uv sync --dev
 cp .env.example .env
 ```
 
-Set `SERPER_API_KEY` in `.env` before running collection-related commands. For job description extraction with Azure AI Foundry, set `JOB_DESCRIPTION_EXTRACTION_PROVIDER=azure`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT_NAME`, and `AZURE_OPENAI_API_KEY`. For company enrichment, set `COMPANY_ENRICHMENT_MODEL` to a web-search-capable Azure deployment such as `gpt-5.4-mini` and use the same Azure endpoint/key settings.
+Set `SERPER_API_KEY` in `.env` before running collection-related commands. For job description extraction with Azure AI Foundry, set `JOB_DESCRIPTION_EXTRACTION_PROVIDER=azure`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT_NAME`, and `AZURE_OPENAI_API_KEY`. For company enrichment, set `COMPANY_ENRICHMENT_MODEL` to a web-search-capable Azure deployment such as `gpt-5.4-mini` and use the same Azure endpoint/key settings. For optional shared company review state in the Streamlit inspection app, set `AI_HIRING_RADAR_REVIEW_STATE_DATABASE_URL` to the Supabase Postgres transaction-pooler connection string.
 
 ## CLI
 
@@ -35,6 +35,7 @@ uv run ai-hiring-radar collect-personio --board-url https://acme.jobs.personio.c
 uv run ai-hiring-radar debug-ashby-discovery --sample 5 --json
 uv run ai-hiring-radar process --date YYYY-MM-DD
 uv run ai-hiring-radar extract-job-descriptions --date YYYY-MM-DD --dry-run
+uv run ai-hiring-radar extract-job-descriptions --date YYYY-MM-DD --countries nl,dk --dry-run
 uv run ai-hiring-radar extract-job-descriptions --date YYYY-MM-DD --limit 10
 uv run ai-hiring-radar extract-job-descriptions --date YYYY-MM-DD --model gpt-5.4-mini
 uv run ai-hiring-radar extract-job-descriptions --date YYYY-MM-DD --restart
@@ -54,11 +55,11 @@ Use `--location-depth cities` for deeper Netherlands-only coverage across config
 
 Processing reads those raw wrappers, writes deduplicated candidates to `data/processed/job_candidates_YYYY-MM-DD.jsonl`, aggregates parseable companies to `data/processed/companies_YYYY-MM-DD.jsonl`, and exports review files under `data/exports/`.
 
-Job description extraction is a separate step after `process`. It reads `data/processed/job_candidates_YYYY-MM-DD.jsonl`, calls a Pydantic AI structured-output extractor for candidates with useful ATS/job-description data, and writes compact records to `data/processed/job_description_extracts_YYYY-MM-DD.jsonl`. The extraction output includes model/prompt metadata and structured datapoints, but intentionally does not include full job description text, evidence snippets, raw LLM responses, or confidence scores. Progress is shown by default with `tqdm`; use `--no-progress` for quiet runs. Successful records are appended immediately, and reruns resume by skipping existing `job_id`s. Use `--restart` to clear existing extracts first. Use `--dry-run` to count processable candidates without model calls or output writes.
+Job description extraction is a separate step after `process`. It reads `data/processed/job_candidates_YYYY-MM-DD.jsonl`, calls a Pydantic AI structured-output extractor for candidates with useful ATS/job-description data, and writes compact records to `data/processed/job_description_extracts_YYYY-MM-DD.jsonl`. The extraction output includes model/prompt metadata and structured datapoints, but intentionally does not include full job description text, evidence snippets, raw LLM responses, or confidence scores. Progress is shown by default with `tqdm`; use `--no-progress` for quiet runs. Successful records are appended immediately, and reruns resume by skipping existing `job_id`s. Use `--countries nl,dk` to extract only jobs matching any selected country code before broadening to the full set later. Use `--restart` to clear existing extracts first. Use `--dry-run` to count processable candidates without model calls or output writes.
 
 Company enrichment is a separate step after `process`. It reads `data/processed/companies_YYYY-MM-DD.jsonl`, optionally joins compact context from `data/processed/job_candidates_YYYY-MM-DD.jsonl`, uses Pydantic AI with native web search to extract company facts and public contacts, and writes `data/processed/company_enrichment_extracts_YYYY-MM-DD.jsonl`. The enrichment output includes model/prompt metadata, source URLs, company facts, named public contacts, generic public inboxes, and compact `quality_warnings`, but intentionally does not include full web page text, search result dumps, evidence snippets, job age, final recommendations, outreach reasons, or raw LLM responses. Progress is shown by default with `tqdm`; use `--no-progress` for quiet runs. Successful records are appended immediately, and reruns resume by skipping existing `company_key`s. Use `--countries nl,dk` to enrich only companies matching any selected country code before broadening to the full set later. Use `--restart` to clear existing extracts first. Core company facts require non-ATS source URLs; if a model returns ATS-only company facts, the runner retries once, then removes only unsupported fields while preserving useful ATS-supported AI hiring signals. Use `--dry-run` to count processable companies without model calls or output writes.
 
-Inspection launches a local read-only Streamlit UI for one processed date. It requires `data/processed/companies_YYYY-MM-DD.jsonl` and uses `data/processed/job_candidates_YYYY-MM-DD.jsonl`, `data/processed/job_description_extracts_YYYY-MM-DD.jsonl`, and `data/processed/company_enrichment_extracts_YYYY-MM-DD.jsonl` when present. Missing optional files only reduce available filters and detail panels. The UI supports filtering by workplace mode, AI team context, delivery context, company type, raw company size, country, role classification, source/platform, AI tech-forward signal, contacts, JD extracts, enrichment status, and free-text search. It is local-only and read-only; it does not edit review status, save notes, run collection, or replace the CSV/Markdown export flow.
+Inspection launches a Streamlit UI for one processed date. It requires `data/processed/companies_YYYY-MM-DD.jsonl` and uses `data/processed/job_candidates_YYYY-MM-DD.jsonl`, `data/processed/job_description_extracts_YYYY-MM-DD.jsonl`, and `data/processed/company_enrichment_extracts_YYYY-MM-DD.jsonl` when present. Missing optional files only reduce available filters and detail panels. The UI supports filtering by workplace mode, AI team context, delivery context, company type, raw company size, country, role classification, source/platform, AI tech-forward signal, fit status, outreach status, needs-action state, contacts, JD extracts, enrichment status, and free-text search. Generated company/job/enrichment facts remain read-only. When Supabase review-state persistence is configured, operators can save shared company fit status, outreach status, and notes. When Supabase is missing or unavailable, the app still renders generated inspection data in read-only mode.
 
 The included Azure AI Foundry configuration uses the Responses API endpoint `https://dev-aibooking-openai.openai.azure.com/openai/responses?api-version=2025-04-01-preview` and deployment `gpt-5.4-mini`. The extractor normalizes that URL to the Azure resource endpoint and uses Pydantic AI's `OpenAIResponsesModel` automatically. If `--model` is omitted, `AZURE_OPENAI_DEPLOYMENT_NAME` is used before `JOB_DESCRIPTION_EXTRACTION_MODEL`.
 
@@ -85,6 +86,36 @@ This writes `data/processed/inspection_companies_YYYY-MM-DD.jsonl`. The artifact
 ```text
 https://your-app.streamlit.app/?date=YYYY-MM-DD
 ```
+
+### Shared Review State
+
+The inspection app can persist current manual review state in Supabase Postgres. Generated JSONL and compact inspection artifacts stay read-only; only `company_review_state` is written by the app.
+
+Create the table and indexes by running the SQL in `architecture-design-documents/04-company-review-state/setup.sql` from the Supabase SQL editor.
+
+The persisted status values are:
+
+```text
+fit_status: unreviewed, best_fit, possible_fit, not_interesting
+outreach_status: not_started, message_sent, follow_up_needed, replied, closed
+```
+
+For Streamlit Cloud, add the Supabase transaction-pooler connection string to app secrets:
+
+```toml
+[connections.supabase_review_state]
+url = "postgres://app_user.PROJECT_REF:PASSWORD@aws-REGION.pooler.supabase.com:6543/postgres"
+```
+
+For local development, use `.env` or your shell:
+
+```bash
+AI_HIRING_RADAR_REVIEW_STATE_DATABASE_URL=postgres://app_user.PROJECT_REF:PASSWORD@aws-REGION.pooler.supabase.com:6543/postgres
+```
+
+Use a dedicated least-privilege database user for the app. It only needs `usage` on schema `public` and `select`, `insert`, and `update` on `public.company_review_state`; it does not need delete, DDL, or access to generated files.
+
+To verify configuration, launch the app and check the top summary area. It shows whether review-state persistence is enabled, how many persisted rows loaded for the current generated records, how many records are using defaults, and counts by fit/outreach status. If the URL is missing, the table is missing, or Supabase is unavailable, the app shows a warning and disables save controls while still rendering generated inspection data.
 
 For the simplest private deployment:
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from html import escape
 import re
 import os
@@ -11,10 +12,20 @@ from typing import Any
 import streamlit as st
 
 from ai_hiring_radar.inspection import CompanyInspectionDataset, load_company_inspection_data
+from ai_hiring_radar.review_state import (
+    FIT_STATUS_OPTIONS,
+    OUTREACH_STATUS_OPTIONS,
+    build_review_state_payload,
+    load_review_state,
+    merge_review_state,
+    upsert_review_state,
+)
 from ai_hiring_radar.storage_json import DEFAULT_DATA_DIR, processed_dir
 
 
 PARETO_LOGO_URL = "https://www.pareto.si/wp-content/uploads/2023/03/logo_90.png"
+REVIEW_STATE_DATABASE_URL_ENV = "AI_HIRING_RADAR_REVIEW_STATE_DATABASE_URL"
+REVIEW_STATE_CONNECTION_SECRET = "supabase_review_state"
 COMPANIES_FILENAME_PATTERN = re.compile(r"companies_(\d{4}-\d{2}-\d{2})\.jsonl")
 INSPECTION_ARTIFACT_FILENAME_PATTERN = re.compile(
     r"inspection_companies_(\d{4}-\d{2}-\d{2})\.jsonl"
@@ -42,6 +53,8 @@ SORT_FIELDS = {
     "JD Extracts": "job_description_extract_count",
     "Jobs": "job_count",
     "Company": "company",
+    "Fit Status": "fit_status",
+    "Outreach Status": "outreach_status",
     "Company Type": "company_type",
     "Company Size": "company_size",
     "AI Signal": "ai_tech_forward_signal",
@@ -60,11 +73,33 @@ FILTER_DEFAULTS = {
     "filter_role_classifications": [],
     "filter_sources": [],
     "filter_ai_tech_forward_signals": [],
+    "filter_fit_statuses": [],
+    "filter_outreach_statuses": [],
+    "filter_needs_action": "Any",
     "filter_has_contacts": "Any",
     "filter_has_job_description_extracts": "Any",
     "filter_has_company_enrichment": "Any",
     "filter_search": "",
 }
+
+
+@dataclass(frozen=True)
+class ReviewStateBackendStatus:
+    database_url: str | None
+    rows_loaded: int = 0
+    error: str | None = None
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.database_url) and self.error is None
+
+    @property
+    def read_only_reason(self) -> str:
+        if not self.database_url:
+            return "review-state database URL is not configured"
+        if self.error:
+            return self.error
+        return "review-state persistence is unavailable"
 
 
 def main() -> None:
@@ -97,20 +132,112 @@ def main() -> None:
         st.stop()
         return
 
-    _render_missing_file_warnings(dataset)
-    filters = _sidebar_filters(dataset.records)
-    filtered_records = _apply_filters(dataset.records, filters)
+    review_state_by_company_key: dict[str, dict[str, Any]] = {}
+    review_state_error: str | None = None
+    review_state_database_url = _review_state_database_url()
+    if review_state_database_url:
+        try:
+            review_state_by_company_key = _load_review_state_for_records(
+                dataset.records,
+                database_url=review_state_database_url,
+            )
+        except Exception as exc:  # pragma: no cover - exact driver errors vary.
+            review_state_error = str(exc)
+    review_state_status = ReviewStateBackendStatus(
+        database_url=review_state_database_url,
+        rows_loaded=len(review_state_by_company_key),
+        error=review_state_error,
+    )
+    records = merge_review_state(dataset.records, review_state_by_company_key)
 
-    _render_summary(dataset, filtered_company_count=len(filtered_records))
+    _render_missing_file_warnings(dataset)
+    _render_pending_save_message()
+    reviewer_name = _sidebar_reviewer_name()
+    filters = _sidebar_filters(records)
+    filtered_records = _apply_filters(records, filters)
+
+    _render_summary(
+        dataset,
+        records=records,
+        review_state_status=review_state_status,
+        filtered_company_count=len(filtered_records),
+    )
     sort_field, descending = _sort_controls()
-    sorted_records = _sort_records(filtered_records, sort_field, descending=descending)
-    selected_record = _render_company_table(sorted_records)
-    _render_company_detail(selected_record)
+    _render_workflow_tabs(
+        filtered_records,
+        sort_field=sort_field,
+        descending=descending,
+        review_state_status=review_state_status,
+        reviewer_name=reviewer_name,
+        collection_date=dataset.collection_date,
+    )
 
 
 @st.cache_data(show_spinner="Loading processed inspection data")
 def _load_dataset(collection_date: str) -> CompanyInspectionDataset:
     return load_company_inspection_data(collection_date)
+
+
+def _review_state_database_url() -> str | None:
+    secret_url = _review_state_database_url_from_secrets()
+    if secret_url:
+        return secret_url
+    env_url = os.environ.get(REVIEW_STATE_DATABASE_URL_ENV, "").strip()
+    return env_url or None
+
+
+def _review_state_database_url_from_secrets() -> str | None:
+    try:
+        secrets = st.secrets
+        connections = _mapping_get(secrets, "connections")
+        connection = _mapping_get(connections, REVIEW_STATE_CONNECTION_SECRET)
+        url = _mapping_get(connection, "url")
+    except Exception:
+        return None
+    return url.strip() if isinstance(url, str) and url.strip() else None
+
+
+def _mapping_get(value: object | None, key: str) -> object | None:
+    if value is None:
+        return None
+    get = getattr(value, "get", None)
+    if callable(get):
+        try:
+            return get(key)
+        except Exception:
+            return None
+    try:
+        return value[key]  # type: ignore[index]
+    except Exception:
+        return None
+
+
+def _load_review_state_for_records(
+    records: list[dict[str, Any]],
+    *,
+    database_url: str,
+) -> dict[str, dict[str, Any]]:
+    return load_review_state(_record_company_keys(records), database_url=database_url)
+
+
+def _record_company_keys(records: list[dict[str, Any]]) -> list[str]:
+    keys: list[str] = []
+    for record in records:
+        company_key = " ".join(str(record.get("company_key") or "").split()).strip()
+        if company_key and company_key not in keys:
+            keys.append(company_key)
+    return keys
+
+
+def _render_pending_save_message() -> None:
+    message = st.session_state.pop("review_state_save_message", None)
+    if message:
+        st.success(str(message))
+
+
+def _sidebar_reviewer_name() -> str:
+    st.sidebar.header("Review")
+    return st.sidebar.text_input("Reviewer name", key="reviewer_name").strip()
 
 
 def _apply_pareto_theme() -> None:
@@ -599,6 +726,24 @@ def _sidebar_filters(records: list[dict[str, Any]]) -> dict[str, Any]:
                 _options(records, "ai_tech_forward_signal", include_missing=True),
                 key="filter_ai_tech_forward_signals",
             ),
+            "fit_statuses": st.multiselect(
+                "Fit status",
+                list(FIT_STATUS_OPTIONS),
+                key="filter_fit_statuses",
+            ),
+            "outreach_statuses": st.multiselect(
+                "Outreach status",
+                list(OUTREACH_STATUS_OPTIONS),
+                key="filter_outreach_statuses",
+            ),
+            "needs_action": st.selectbox(
+                "Needs action",
+                BOOLEAN_FILTER_OPTIONS,
+                key="filter_needs_action",
+                help=(
+                    "Suitable companies with outreach not started or follow-up needed."
+                ),
+            ),
             "has_contacts": st.selectbox(
                 "Has contacts", BOOLEAN_FILTER_OPTIONS, key="filter_has_contacts"
             ),
@@ -660,6 +805,16 @@ def _apply_filters(
             record, "ai_tech_forward_signal", filters["ai_tech_forward_signals"]
         ):
             continue
+        if not _matches_scalar_filter(record, "fit_status", filters.get("fit_statuses", [])):
+            continue
+        if not _matches_scalar_filter(
+            record,
+            "outreach_status",
+            filters.get("outreach_statuses", []),
+        ):
+            continue
+        if not _matches_needs_action_filter(record, filters.get("needs_action", "Any")):
+            continue
         if not _matches_boolean_filter(record, "has_contacts", filters["has_contacts"]):
             continue
         if not _matches_boolean_filter(
@@ -681,10 +836,13 @@ def _apply_filters(
 def _render_summary(
     dataset: CompanyInspectionDataset,
     *,
+    records: list[dict[str, Any]],
+    review_state_status: ReviewStateBackendStatus,
     filtered_company_count: int,
 ) -> None:
     counts = dataset.counts
     total_jobs = sum(int(record.get("job_count") or 0) for record in dataset.records)
+    default_review_count = sum(1 for record in records if not record.get("has_review_state"))
 
     st.caption(f"Collection date: {dataset.collection_date}")
     metrics = [
@@ -693,6 +851,8 @@ def _render_summary(
         ("Jobs", total_jobs),
         ("JD extracts", counts.job_description_extracts_loaded),
         ("Enrichments", counts.company_enrichments_loaded),
+        ("Review rows", review_state_status.rows_loaded),
+        ("Default state", default_review_count),
         ("Missing optional", len(dataset.missing_optional_files)),
     ]
     metric_cards = "".join(_metric_card(label, value) for label, value in metrics)
@@ -710,6 +870,42 @@ def _render_summary(
     if any(skipped.values()):
         with st.expander("Skipped malformed rows", expanded=False):
             st.json(skipped)
+    _render_review_state_status(review_state_status, records)
+
+
+def _render_review_state_status(
+    review_state_status: ReviewStateBackendStatus,
+    records: list[dict[str, Any]],
+) -> None:
+    if review_state_status.enabled:
+        st.caption(
+            "Review-state persistence enabled: "
+            f"{review_state_status.rows_loaded} persisted row(s) loaded."
+        )
+    else:
+        st.warning(
+            "Review-state persistence is disabled; generated inspection data is read-only. "
+            f"Reason: {review_state_status.read_only_reason}."
+        )
+
+    st.caption("Fit status: " + _format_counts(_count_by(records, "fit_status")))
+    st.caption(
+        "Outreach status: " + _format_counts(_count_by(records, "outreach_status"))
+    )
+
+
+def _count_by(records: list[dict[str, Any]], field: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for record in records:
+        value = str(record.get(field) or "").strip() or "(missing)"
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+def _format_counts(counts: dict[str, int]) -> str:
+    if not counts:
+        return "none"
+    return ", ".join(f"{key}={value}" for key, value in sorted(counts.items()))
 
 
 def _render_missing_file_warnings(dataset: CompanyInspectionDataset) -> None:
@@ -750,7 +946,69 @@ def _sort_controls() -> tuple[str, bool]:
     return SORT_FIELDS[sort_label], direction == "Descending"
 
 
-def _render_company_table(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _render_workflow_tabs(
+    records: list[dict[str, Any]],
+    *,
+    sort_field: str,
+    descending: bool,
+    review_state_status: ReviewStateBackendStatus,
+    reviewer_name: str,
+    collection_date: str,
+) -> None:
+    tab_records = [
+        ("Inspect", records),
+        ("Shortlist", _shortlist_records(records)),
+        ("Outreach", _outreach_records(records)),
+        ("Rejected", _rejected_records(records)),
+    ]
+    tabs = st.tabs([label for label, _ in tab_records])
+    for tab, (label, tab_record_values) in zip(tabs, tab_records, strict=True):
+        with tab:
+            st.caption(f"{len(tab_record_values)} company record(s)")
+            sorted_records = _sort_records(
+                tab_record_values,
+                sort_field,
+                descending=descending,
+            )
+            scope = _widget_key_part(label)
+            selected_record = _render_company_table(
+                sorted_records,
+                key=f"{scope}-company-table",
+            )
+            _render_company_detail(
+                selected_record,
+                review_state_status=review_state_status,
+                reviewer_name=reviewer_name,
+                collection_date=collection_date,
+                scope=scope,
+            )
+
+
+def _shortlist_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        record
+        for record in records
+        if record.get("fit_status") in {"best_fit", "possible_fit"}
+    ]
+
+
+def _outreach_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        record
+        for record in _shortlist_records(records)
+        if record.get("outreach_status") != "not_started"
+    ]
+
+
+def _rejected_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [record for record in records if record.get("fit_status") == "not_interesting"]
+
+
+def _render_company_table(
+    records: list[dict[str, Any]],
+    *,
+    key: str = "company-table",
+) -> dict[str, Any] | None:
     if not records:
         st.info("No companies match the current filters.")
         return None
@@ -765,29 +1023,50 @@ def _render_company_table(records: list[dict[str, Any]]) -> dict[str, Any] | Non
         column_order=_company_table_column_order(),
         height=360,
         row_height=30,
+        key=key,
     )
     st.caption("Click a company row to inspect it below. Column headers can also sort the table.")
     return _selected_record_from_event(records, event)
 
 
-def _render_company_detail(record: dict[str, Any] | None) -> None:
+def _render_company_detail(
+    record: dict[str, Any] | None,
+    *,
+    review_state_status: ReviewStateBackendStatus,
+    reviewer_name: str,
+    collection_date: str,
+    scope: str,
+) -> None:
     st.subheader("Company Detail")
     if record is None:
         st.info("Select a company row to inspect details.")
         return
 
-    _render_company_facts(record)
-    _render_jobs(record)
+    _render_company_facts(
+        record,
+        review_state_status=review_state_status,
+        reviewer_name=reviewer_name,
+        collection_date=collection_date,
+        scope=scope,
+    )
+    _render_jobs(record, scope=scope)
     _render_contacts(record)
     _render_evidence(record)
     if st.checkbox(
         "Show raw inspection JSON",
-        key=f"raw-company-{_widget_key_part(record.get('company_key'), record.get('company'))}",
+        key=f"raw-company-{_widget_key_part(scope, record.get('company_key'), record.get('company'))}",
     ):
         st.json(record)
 
 
-def _render_company_facts(record: dict[str, Any]) -> None:
+def _render_company_facts(
+    record: dict[str, Any],
+    *,
+    review_state_status: ReviewStateBackendStatus,
+    reviewer_name: str,
+    collection_date: str,
+    scope: str,
+) -> None:
     st.markdown(f"### {_display(record.get('company'))}")
     summary = []
     for label, value in (
@@ -807,6 +1086,14 @@ def _render_company_facts(record: dict[str, Any]) -> None:
     columns[2].metric("Contacts", len(record.get("contacts") or []))
     columns[3].metric("Enriched", "Yes" if record.get("has_company_enrichment") else "No")
 
+    _render_review_form(
+        record,
+        review_state_status=review_state_status,
+        reviewer_name=reviewer_name,
+        collection_date=collection_date,
+        scope=scope,
+    )
+
     st.markdown("#### Facts")
     left, right = st.columns(2)
     _write_fact(left, "Countries", _join(record.get("countries")))
@@ -816,6 +1103,8 @@ def _render_company_facts(record: dict[str, Any]) -> None:
     _write_fact(right, "Industry", record.get("industry"))
     _write_fact(right, "Founded", record.get("founded_year"))
     _write_fact(right, "AI tech-forward signal", record.get("ai_tech_forward_signal"))
+    _write_fact(right, "Fit status", record.get("fit_status"))
+    _write_fact(right, "Outreach status", record.get("outreach_status"))
     _write_fact(right, "Review status", record.get("review_status"))
     if record.get("company_description"):
         st.markdown("#### Description")
@@ -828,6 +1117,99 @@ def _render_company_facts(record: dict[str, Any]) -> None:
         st.write(record["why_interesting"])
 
 
+def _render_review_form(
+    record: dict[str, Any],
+    *,
+    review_state_status: ReviewStateBackendStatus,
+    reviewer_name: str,
+    collection_date: str,
+    scope: str,
+) -> None:
+    st.markdown("#### Manual Review")
+    review_metadata = _review_metadata(record)
+    if review_metadata:
+        st.caption(review_metadata)
+
+    company_key = str(record.get("company_key") or "").strip()
+    disabled_reason: str | None = None
+    if not company_key:
+        disabled_reason = "This record has no company_key, so review state cannot be saved."
+    elif not review_state_status.enabled:
+        disabled_reason = f"Read-only mode: {review_state_status.read_only_reason}."
+    if disabled_reason:
+        st.warning(disabled_reason)
+
+    disabled = disabled_reason is not None
+    form_key = f"review-state-{_widget_key_part(scope, company_key, record.get('company'))}"
+    fit_options = list(FIT_STATUS_OPTIONS)
+    outreach_options = list(OUTREACH_STATUS_OPTIONS)
+    with st.form(form_key):
+        fit_status = st.selectbox(
+            "Fit status",
+            fit_options,
+            index=_option_index(fit_options, record.get("fit_status")),
+            disabled=disabled,
+            key=f"{form_key}-fit-status",
+        )
+        outreach_status = st.selectbox(
+            "Outreach status",
+            outreach_options,
+            index=_option_index(outreach_options, record.get("outreach_status")),
+            disabled=disabled,
+            key=f"{form_key}-outreach-status",
+        )
+        notes = st.text_area(
+            "Notes",
+            value=str(record.get("review_notes") or ""),
+            disabled=disabled,
+            key=f"{form_key}-notes",
+        )
+        submitted = st.form_submit_button("Save review state", disabled=disabled)
+
+    if not submitted:
+        return
+
+    if not review_state_status.database_url:
+        st.error("Review-state database URL is not configured.")
+        return
+
+    try:
+        payload = build_review_state_payload(
+            company_key=company_key,
+            company=str(record.get("company") or ""),
+            fit_status=str(fit_status),
+            outreach_status=str(outreach_status),
+            notes=notes,
+            collection_date=collection_date,
+            reviewer_name=reviewer_name,
+        )
+        upsert_review_state(payload, database_url=review_state_status.database_url)
+    except Exception as exc:
+        st.error(f"Failed to save review state: {exc}")
+        return
+
+    st.session_state["review_state_save_message"] = (
+        f"Saved review state for {_display(record.get('company'))}."
+    )
+    st.rerun()
+
+
+def _review_metadata(record: dict[str, Any]) -> str:
+    metadata: list[str] = []
+    if record.get("inspected_at"):
+        metadata.append(f"Inspected: {record['inspected_at']}")
+    if record.get("last_reviewed_at"):
+        metadata.append(f"Last saved: {record['last_reviewed_at']}")
+    if record.get("last_reviewed_by"):
+        metadata.append(f"By: {record['last_reviewed_by']}")
+    return " | ".join(metadata)
+
+
+def _option_index(options: list[Any], value: object | None) -> int:
+    cleaned = str(value or "").strip()
+    return options.index(cleaned) if cleaned in options else 0
+
+
 def _write_fact(container: Any, label: str, value: object | None) -> None:
     rendered = _display(value)
     if rendered == "Unknown":
@@ -835,7 +1217,7 @@ def _write_fact(container: Any, label: str, value: object | None) -> None:
     container.markdown(f"**{label}:** {rendered}")
 
 
-def _render_jobs(record: dict[str, Any]) -> None:
+def _render_jobs(record: dict[str, Any], *, scope: str) -> None:
     jobs = record.get("jobs") or []
     if not jobs:
         st.info("No job details are available for this company.")
@@ -850,12 +1232,23 @@ def _render_jobs(record: dict[str, Any]) -> None:
         "Inspect job",
         range(len(jobs)),
         format_func=lambda index: _job_option_label(jobs[index], index + 1),
-        key=f"job-detail-{_widget_key_part(record.get('company_key'), record.get('company'))}",
+        key=f"job-detail-{_widget_key_part(scope, record.get('company_key'), record.get('company'))}",
     )
-    _render_job_detail(record, jobs[int(selected_index)], int(selected_index) + 1)
+    _render_job_detail(
+        record,
+        jobs[int(selected_index)],
+        int(selected_index) + 1,
+        scope=scope,
+    )
 
 
-def _render_job_detail(record: dict[str, Any], job: dict[str, Any], index: int) -> None:
+def _render_job_detail(
+    record: dict[str, Any],
+    job: dict[str, Any],
+    index: int,
+    *,
+    scope: str,
+) -> None:
     title = _display(job.get("job_title_raw") or job.get("job_id") or f"Job {index}")
     st.markdown(f"#### {title}")
     st.write(_job_table_row(job))
@@ -863,7 +1256,9 @@ def _render_job_detail(record: dict[str, Any], job: dict[str, Any], index: int) 
     if job.get("contacts"):
         st.markdown("#### Job Contacts")
         st.dataframe(job["contacts"], use_container_width=True, hide_index=True)
-    key_prefix = f"{_widget_key_part(record.get('company_key'), record.get('company'))}-{index}"
+    key_prefix = (
+        f"{_widget_key_part(scope, record.get('company_key'), record.get('company'))}-{index}"
+    )
     if job.get("description"):
         if st.checkbox(
             "Show full job description",
@@ -931,6 +1326,8 @@ def _url_label(url: str) -> str:
 def _company_table_row(record: dict[str, Any]) -> dict[str, Any]:
     return {
         "Company": record.get("company"),
+        "Fit Status": record.get("fit_status"),
+        "Outreach Status": record.get("outreach_status"),
         "Countries": _join(record.get("countries")),
         "Role Classification": record.get("role_classification"),
         "Jobs": record.get("job_count"),
@@ -1011,6 +1408,8 @@ def _widget_key_part(*values: object | None) -> str:
 def _company_table_column_config() -> dict[str, Any]:
     return {
         "Company": st.column_config.TextColumn("Company", width=170),
+        "Fit Status": st.column_config.TextColumn("Fit", width=106),
+        "Outreach Status": st.column_config.TextColumn("Outreach", width=122),
         "Countries": st.column_config.TextColumn("Countries", width=112),
         "Role Classification": st.column_config.TextColumn("Role", width=145),
         "Jobs": st.column_config.NumberColumn("Jobs", width=54),
@@ -1029,6 +1428,8 @@ def _company_table_column_config() -> dict[str, Any]:
 def _company_table_column_order() -> tuple[str, ...]:
     return (
         "Company",
+        "Fit Status",
+        "Outreach Status",
         "Countries",
         "Role Classification",
         "Jobs",
@@ -1124,6 +1525,19 @@ def _matches_boolean_filter(record: dict[str, Any], field: str, selected_value: 
         return True
     value = bool(record.get(field))
     return value is (selected_value == "Yes")
+
+
+def _matches_needs_action_filter(record: dict[str, Any], selected_value: str) -> bool:
+    if selected_value == "Any":
+        return True
+    needs_action = _is_needs_action_record(record)
+    return needs_action is (selected_value == "Yes")
+
+
+def _is_needs_action_record(record: dict[str, Any]) -> bool:
+    return record.get("fit_status") in {"best_fit", "possible_fit"} and record.get(
+        "outreach_status"
+    ) in {"not_started", "follow_up_needed"}
 
 
 def _matches_job_count_filter(

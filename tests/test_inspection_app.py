@@ -19,6 +19,9 @@ def _filters(**overrides):  # noqa: ANN001, ANN202 - compact test fixture helper
         "role_classifications": [],
         "sources": [],
         "ai_tech_forward_signals": [],
+        "fit_statuses": [],
+        "outreach_statuses": [],
+        "needs_action": "Any",
         "has_contacts": "Any",
         "has_job_description_extracts": "Any",
         "has_company_enrichment": "Any",
@@ -31,6 +34,7 @@ def _filters(**overrides):  # noqa: ANN001, ANN202 - compact test fixture helper
 def _record(**overrides):  # noqa: ANN001, ANN202 - compact test fixture helper.
     record = {
         "company": "Acme AI",
+        "company_key": "acme ai",
         "countries": ["Netherlands"],
         "role_classification": "AI Execution Role",
         "sources": ["lever"],
@@ -49,6 +53,10 @@ def _record(**overrides):  # noqa: ANN001, ANN202 - compact test fixture helper.
         "has_contacts": True,
         "has_job_description_extracts": True,
         "has_company_enrichment": True,
+        "fit_status": "unreviewed",
+        "outreach_status": "not_started",
+        "review_notes": "",
+        "has_review_state": False,
         "job_count": 1,
         "job_description_extract_count": 1,
         "jobs": [
@@ -172,6 +180,55 @@ def test_apply_filters_supports_min_job_count_filter() -> None:
     assert [record["company"] for record in filtered] == ["Large pipeline"]
 
 
+def test_apply_filters_supports_fit_status_filter() -> None:
+    records = [
+        _record(company="Unreviewed", fit_status="unreviewed"),
+        _record(company="Best", fit_status="best_fit"),
+    ]
+
+    filtered = inspection_app._apply_filters(records, _filters(fit_statuses=["best_fit"]))
+
+    assert [record["company"] for record in filtered] == ["Best"]
+
+
+def test_apply_filters_supports_outreach_status_filter() -> None:
+    records = [
+        _record(company="Not started", outreach_status="not_started"),
+        _record(company="Sent", outreach_status="message_sent"),
+    ]
+
+    filtered = inspection_app._apply_filters(
+        records,
+        _filters(outreach_statuses=["message_sent"]),
+    )
+
+    assert [record["company"] for record in filtered] == ["Sent"]
+
+
+def test_apply_filters_supports_needs_action_filter() -> None:
+    records = [
+        _record(company="Best not started", fit_status="best_fit", outreach_status="not_started"),
+        _record(
+            company="Possible follow-up",
+            fit_status="possible_fit",
+            outreach_status="follow_up_needed",
+        ),
+        _record(
+            company="Rejected follow-up",
+            fit_status="not_interesting",
+            outreach_status="follow_up_needed",
+        ),
+        _record(company="Best sent", fit_status="best_fit", outreach_status="message_sent"),
+    ]
+
+    filtered = inspection_app._apply_filters(records, _filters(needs_action="Yes"))
+
+    assert [record["company"] for record in filtered] == [
+        "Best not started",
+        "Possible follow-up",
+    ]
+
+
 def test_apply_filters_supports_missing_source_filter_values() -> None:
     records = [
         _record(company="With source", sources=["lever"]),
@@ -261,11 +318,63 @@ def test_sort_records_supports_jobs_ascending() -> None:
     assert [record["company"] for record in sorted_records] == ["Acme", "Beta"]
 
 
+def test_shortlist_records_returns_suitable_companies_only() -> None:
+    records = [
+        _record(company="Best", fit_status="best_fit"),
+        _record(company="Possible", fit_status="possible_fit"),
+        _record(company="Rejected", fit_status="not_interesting"),
+        _record(company="Unreviewed", fit_status="unreviewed"),
+    ]
+
+    shortlisted = inspection_app._shortlist_records(records)
+
+    assert [record["company"] for record in shortlisted] == ["Best", "Possible"]
+
+
+def test_outreach_records_excludes_not_started() -> None:
+    records = [
+        _record(company="Not started", fit_status="best_fit", outreach_status="not_started"),
+        _record(company="Sent", fit_status="best_fit", outreach_status="message_sent"),
+        _record(
+            company="Follow-up",
+            fit_status="possible_fit",
+            outreach_status="follow_up_needed",
+        ),
+        _record(company="Rejected", fit_status="not_interesting", outreach_status="message_sent"),
+    ]
+
+    outreach = inspection_app._outreach_records(records)
+
+    assert [record["company"] for record in outreach] == ["Sent", "Follow-up"]
+
+
+def test_rejected_records_returns_not_interesting_only() -> None:
+    records = [
+        _record(company="Best", fit_status="best_fit"),
+        _record(company="Rejected", fit_status="not_interesting"),
+    ]
+
+    rejected = inspection_app._rejected_records(records)
+
+    assert [record["company"] for record in rejected] == ["Rejected"]
+
+
 def test_company_table_column_order_hides_jd_extracts() -> None:
     column_order = inspection_app._company_table_column_order()
 
     assert "Jobs" in column_order
     assert "JD Extracts" not in column_order
+    assert "Fit Status" in column_order
+    assert "Outreach Status" in column_order
+
+
+def test_company_table_row_includes_review_state_columns() -> None:
+    row = inspection_app._company_table_row(
+        _record(fit_status="best_fit", outreach_status="message_sent")
+    )
+
+    assert row["Fit Status"] == "best_fit"
+    assert row["Outreach Status"] == "message_sent"
 
 
 def test_selected_record_from_event_uses_clicked_row() -> None:
@@ -294,6 +403,30 @@ def test_selected_record_from_event_returns_none_when_selection_is_out_of_range(
     selected = inspection_app._selected_record_from_event(records, event)
 
     assert selected is None
+
+
+def test_load_review_state_for_records_queries_unique_company_keys(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_load_review_state(
+        company_keys: list[str],
+        *,
+        database_url: str,
+    ) -> dict[str, dict[str, object]]:
+        calls.append({"company_keys": company_keys, "database_url": database_url})
+        return {"acme ai": {"fit_status": "best_fit"}}
+
+    monkeypatch.setattr(inspection_app, "load_review_state", fake_load_review_state)
+
+    loaded = inspection_app._load_review_state_for_records(
+        [_record(company_key="acme ai"), _record(company_key="acme ai"), _record(company_key="beta ai")],
+        database_url="postgres://test",
+    )
+
+    assert loaded == {"acme ai": {"fit_status": "best_fit"}}
+    assert calls == [
+        {"company_keys": ["acme ai", "beta ai"], "database_url": "postgres://test"}
+    ]
 
 
 def test_job_table_row_excludes_normalized_title() -> None:
