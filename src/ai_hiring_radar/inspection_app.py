@@ -11,6 +11,7 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
+from dotenv import load_dotenv
 from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder
 
 from ai_hiring_radar.inspection import CompanyInspectionDataset, load_company_inspection_data
@@ -184,8 +185,13 @@ def _review_state_database_url() -> str | None:
     secret_url = _review_state_database_url_from_secrets()
     if secret_url:
         return secret_url
+    _load_local_env()
     env_url = os.environ.get(REVIEW_STATE_DATABASE_URL_ENV, "").strip()
     return env_url or None
+
+
+def _load_local_env(dotenv_path: Path | None = None) -> None:
+    load_dotenv(dotenv_path=dotenv_path, override=False)
 
 
 def _review_state_database_url_from_secrets() -> str | None:

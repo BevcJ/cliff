@@ -94,6 +94,43 @@ def test_latest_collection_date_returns_none_without_company_files(tmp_path) -> 
     assert inspection_app._latest_collection_date(data_dir=tmp_path) is None
 
 
+def test_load_local_env_reads_env_file_without_overriding_existing_env(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "AI_HIRING_RADAR_REVIEW_STATE_DATABASE_URL=postgres://from-file\n"
+        "EXISTING_VALUE=from-file\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("AI_HIRING_RADAR_REVIEW_STATE_DATABASE_URL", raising=False)
+    monkeypatch.setenv("EXISTING_VALUE", "from-env")
+
+    inspection_app._load_local_env(env_path)
+
+    assert (
+        inspection_app.os.environ["AI_HIRING_RADAR_REVIEW_STATE_DATABASE_URL"]
+        == "postgres://from-file"
+    )
+    assert inspection_app.os.environ["EXISTING_VALUE"] == "from-env"
+
+
+def test_review_state_database_url_loads_local_env_before_env_fallback(monkeypatch) -> None:
+    monkeypatch.delenv("AI_HIRING_RADAR_REVIEW_STATE_DATABASE_URL", raising=False)
+    monkeypatch.setattr(inspection_app, "_review_state_database_url_from_secrets", lambda: None)
+
+    def fake_load_local_env() -> None:
+        monkeypatch.setenv(
+            "AI_HIRING_RADAR_REVIEW_STATE_DATABASE_URL",
+            "postgres://from-local-env",
+        )
+
+    monkeypatch.setattr(inspection_app, "_load_local_env", fake_load_local_env)
+
+    assert inspection_app._review_state_database_url() == "postgres://from-local-env"
+
+
 def test_apply_filters_matches_required_optional_and_search_filters() -> None:
     records = [_record(), _record(company="Beta", workplace_modes=["onsite"])]
 

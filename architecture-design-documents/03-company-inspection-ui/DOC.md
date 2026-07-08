@@ -165,7 +165,7 @@ Representative shape:
 
   "company_description": "...",
   "industry": "...",
-  "company_size": "51-200 employees",
+  "company_size": "101-500",
   "founded_year": 2018,
   "company_type": "ai_native",
   "funding_summary": null,
@@ -225,7 +225,7 @@ Field rules:
 3. Full job description text is allowed only inside job detail state and should be collapsed by default in the UI.
 4. Company enrichment fields are copied from `company_enrichment_extracts_YYYY-MM-DD.jsonl` when a matching company enrichment record exists.
 5. Contact lists are deduped by email, then LinkedIn URL, then name/title/role.
-6. `company_size` remains sourced raw text in V1. Bucketed size filters are deferred.
+6. `company_size` uses sourced sortable buckets: `0-50`, `51-100`, `101-500`, or `501+`.
 
 ## Interfaces
 
