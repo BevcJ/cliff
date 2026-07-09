@@ -35,6 +35,9 @@ uv run ai-hiring-radar collect-personio --board-url https://acme.jobs.personio.c
 uv run ai-hiring-radar discover-recruitee --countries nl --dry-run
 uv run ai-hiring-radar collect-recruitee --countries nl
 uv run ai-hiring-radar collect-recruitee --board-url https://acme.recruitee.com
+uv run ai-hiring-radar discover-workable --countries nl --dry-run
+uv run ai-hiring-radar collect-workable --countries nl
+uv run ai-hiring-radar collect-workable --board-url https://apply.workable.com/workmotion
 uv run ai-hiring-radar debug-ashby-discovery --sample 5 --json
 uv run ai-hiring-radar process --date YYYY-MM-DD
 uv run ai-hiring-radar extract-job-descriptions --date YYYY-MM-DD --dry-run
@@ -75,6 +78,8 @@ Lever collection uses the same discovery flow against `site:jobs.lever.co`, then
 Recruitee collection uses the same discovery flow against `site:*.recruitee.com`, then fetches public offers from `https://{company_slug}.recruitee.com/api/offers/` plus per-offer details from `/api/offers/{offer_id}` for job descriptions when available. Raw board responses are stored under `data/raw/ats/YYYY-MM-DD/recruitee/` and are included by `process` before dedupe and company aggregation.
 
 Personio collection uses the same discovery flow against `site:*.jobs.personio.com`, then fetches the public XML feed from `https://{company_slug}.jobs.personio.com/xml?language=en`. Raw XML is stored in JSON wrappers under `data/raw/ats/YYYY-MM-DD/personio/` and is included by `process` before dedupe and company aggregation.
+
+Workable collection uses the same discovery flow against `site:apply.workable.com`, then fetches public hosted-careers JSON from `https://apply.workable.com/api/v3/accounts/{company_slug}/jobs` and per-job details from `https://apply.workable.com/api/v2/accounts/{company_slug}/jobs/{shortcode}`. Raw listing and detail responses are stored under `data/raw/ats/YYYY-MM-DD/workable/` and are included by `process` before dedupe and company aggregation.
 
 ## Streamlit Cloud Deployment
 

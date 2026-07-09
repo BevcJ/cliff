@@ -23,6 +23,7 @@ class SourceName(StrEnum):
     PERSONIO = "personio"
     RECRUITEE = "recruitee"
     SMARTRECRUITERS = "smartrecruiters"
+    WORKABLE = "workable"
 
 
 class SourceMode(StrEnum):

@@ -29,6 +29,7 @@ from ai_hiring_radar.dedupe import (
 )
 from ai_hiring_radar.hashing import job_candidate_id, stable_sha256
 from ai_hiring_radar.models import EvidenceQuality, SourceMode, SourceName
+from ai_hiring_radar.normalizers.workable import normalize_workable_job, workable_jobs
 from ai_hiring_radar.storage_json import (
     DEFAULT_DATA_DIR,
     format_date,
@@ -56,6 +57,7 @@ ATS_PLATFORMS = (
     SourceName.PERSONIO.value,
     SourceName.RECRUITEE.value,
     SourceName.SMARTRECRUITERS.value,
+    SourceName.WORKABLE.value,
 )
 
 
@@ -1691,6 +1693,20 @@ def normalize_raw_ats_file(raw_file: Path) -> list[dict[str, Any]]:
             for job in _smartrecruiters_postings(response)
             if (
                 candidate := normalize_smartrecruiters_posting(
+                    metadata=metadata,
+                    job=job,
+                    raw_file=raw_file,
+                )
+            )
+            is not None
+        ]
+
+    if platform == SourceName.WORKABLE.value:
+        return [
+            candidate
+            for job in workable_jobs(response)
+            if (
+                candidate := normalize_workable_job(
                     metadata=metadata,
                     job=job,
                     raw_file=raw_file,
