@@ -330,6 +330,14 @@ def test_collect_recruitee_boards_writes_raw_response_details_and_manifest(tmp_p
     assert raw_record["request_params"] == {}
     assert raw_record["response_format"] == "json"
     assert raw_record["endpoint"] == "https://acme-ai.recruitee.com/api/offers/"
+    assert raw_record["title_prefilter"] == {
+        "mode": "strict_title",
+        "source": "listing_title",
+        "source_field": "title/name",
+        "listed_count": 3,
+        "matched_count": 2,
+        "skipped_count": 1,
+    }
     assert sorted(raw_record["offer_detail_responses"]) == ["123", "125"]
     assert raw_record["offer_detail_errors"] == []
     assert read_json(result.manifest_path)["result_files"] == result.result_files

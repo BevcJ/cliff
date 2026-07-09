@@ -10,9 +10,8 @@ from urllib.parse import quote, unquote, urlparse
 import httpx
 
 from ai_hiring_radar.classify import (
-    has_ai_signal,
-    is_excluded_ai_trainer_title,
-    match_known_role,
+    is_ai_role_title_candidate,
+    title_prefilter_metadata,
 )
 from ai_hiring_radar.config import CountriesConfig
 from ai_hiring_radar.models import SourceMode, SourceName
@@ -288,15 +287,30 @@ def _is_workable_public_job(job: dict[str, Any]) -> bool:
 
 
 def _is_workable_detail_candidate_title(value: object | None) -> bool:
-    if is_excluded_ai_trainer_title(value):
-        return False
-    return match_known_role(value) is not None or has_ai_signal(value)
+    return is_ai_role_title_candidate(value)
 
 
 def _is_workable_detail_candidate_job(job: dict[str, Any]) -> bool:
     if not _is_workable_public_job(job):
         return False
     return _is_workable_detail_candidate_title(job.get("title") or job.get("name"))
+
+
+def _workable_title_prefilter_metadata(response: dict[str, Any]) -> dict[str, int | str]:
+    jobs = _workable_jobs(response)
+    public_jobs = [job for job in jobs if _is_workable_public_job(job)]
+    matched_count = sum(
+        1
+        for job in public_jobs
+        if _is_workable_detail_candidate_title(job.get("title") or job.get("name"))
+    )
+    metadata = title_prefilter_metadata(
+        listed_count=len(jobs),
+        matched_count=matched_count,
+        source_field="title/name",
+    )
+    metadata["eligible_count"] = len(public_jobs)
+    return metadata
 
 
 def _error_record(
@@ -436,6 +450,7 @@ def build_raw_workable_response_record(
         "job_detail_endpoints": job_detail_endpoints or [],
         "job_detail_responses": job_detail_responses or {},
         "job_detail_errors": job_detail_errors or [],
+        "title_prefilter": _workable_title_prefilter_metadata(response),
         "response_format": "json",
         "collected_at": collected_at,
         "response": response,

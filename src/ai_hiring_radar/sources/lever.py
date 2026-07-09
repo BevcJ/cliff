@@ -9,6 +9,7 @@ from urllib.parse import quote, unquote, urlparse
 
 import httpx
 
+from ai_hiring_radar.classify import is_ai_role_title_candidate, title_prefilter_metadata
 from ai_hiring_radar.config import CountriesConfig
 from ai_hiring_radar.models import SourceMode, SourceName
 from ai_hiring_radar.query_builder import LocationDepth
@@ -289,8 +290,27 @@ def build_raw_lever_response_record(
         "api_region": api_region,
         "request_params": {"mode": "json"},
         "collected_at": collected_at,
+        "title_prefilter": _lever_title_prefilter_metadata(response),
         "response": response,
     }
+
+
+def _lever_postings(response: list[Any]) -> list[dict[str, Any]]:
+    return [item for item in response if isinstance(item, dict)]
+
+
+def _lever_title_prefilter_metadata(response: list[Any]) -> dict[str, int | str]:
+    postings = _lever_postings(response)
+    matched_count = sum(
+        1
+        for posting in postings
+        if is_ai_role_title_candidate(posting.get("text") or posting.get("title"))
+    )
+    return title_prefilter_metadata(
+        listed_count=len(postings),
+        matched_count=matched_count,
+        source_field="text/title",
+    )
 
 
 def _has_postings_response(response: list[Any]) -> bool:

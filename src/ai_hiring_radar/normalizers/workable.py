@@ -8,8 +8,7 @@ from urllib.parse import quote
 from ai_hiring_radar.classify import (
     classify_role,
     clean_text,
-    has_ai_signal,
-    is_excluded_ai_trainer_title,
+    is_ai_role_title_candidate,
     match_known_role,
     normalize_job_title,
 )
@@ -241,9 +240,7 @@ def normalize_workable_job(
     job_title_raw = _clean_optional(job.get("title") or job.get("name"))
     if job_title_raw is None:
         return None
-    if is_excluded_ai_trainer_title(job_title_raw):
-        return None
-    if match_known_role(job_title_raw) is None and not has_ai_signal(job_title_raw):
+    if not is_ai_role_title_candidate(job_title_raw):
         return None
 
     platform_company_slug = clean_text(metadata.get("platform_company_slug"))

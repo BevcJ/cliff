@@ -95,6 +95,35 @@ def is_excluded_ai_trainer_title(value: object | None) -> bool:
     return AI_TRAINER_EXCLUSION_RE.search(clean_text(value)) is not None
 
 
+def is_ai_role_title_candidate(
+    value: object | None,
+    *,
+    taxonomy_config: TaxonomyConfig | None = None,
+) -> bool:
+    if is_excluded_ai_trainer_title(value):
+        return False
+    return (
+        match_known_role(value, taxonomy_config=taxonomy_config) is not None
+        or has_ai_signal(value)
+    )
+
+
+def title_prefilter_metadata(
+    *,
+    listed_count: int,
+    matched_count: int,
+    source_field: str = "title",
+) -> dict[str, int | str]:
+    return {
+        "mode": "strict_title",
+        "source": "listing_title",
+        "source_field": source_field,
+        "listed_count": listed_count,
+        "matched_count": matched_count,
+        "skipped_count": max(listed_count - matched_count, 0),
+    }
+
+
 def normalize_job_title(
     job_title_raw: str,
     *,

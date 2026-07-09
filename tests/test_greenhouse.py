@@ -77,8 +77,18 @@ def _sample_greenhouse_response() -> dict[str, Any]:
                 "departments": [{"name": "Product"}],
                 "offices": [{"location": {"name": "Netherlands"}}],
             },
+            {
+                "id": 7995156,
+                "title": "Machine Learning Engineer - AI Trainer - Freelance",
+                "updated_at": "2026-06-16T00:00:00Z",
+                "location": {"name": "Amsterdam, Netherlands"},
+                "absolute_url": "https://boards.greenhouse.io/acme-ai/jobs/7995156",
+                "content": "<p>Train AI models.</p>",
+                "departments": [{"name": "Engineering"}],
+                "offices": [],
+            },
         ],
-        "meta": {"total": 3},
+        "meta": {"total": 4},
     }
 
 
@@ -222,6 +232,14 @@ def test_collect_greenhouse_boards_writes_raw_response_and_manifest(tmp_path) ->
     assert raw_record["endpoint"] == (
         "https://boards-api.greenhouse.io/v1/boards/acme-ai/jobs?content=true"
     )
+    assert raw_record["title_prefilter"] == {
+        "mode": "strict_title",
+        "source": "listing_title",
+        "source_field": "title",
+        "listed_count": 4,
+        "matched_count": 2,
+        "skipped_count": 2,
+    }
     assert read_json(result.manifest_path)["result_files"] == result.result_files
 
 

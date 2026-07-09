@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -9,6 +10,7 @@ from urllib.parse import quote, unquote, urlparse
 
 import httpx
 
+from ai_hiring_radar.classify import is_ai_role_title_candidate, title_prefilter_metadata
 from ai_hiring_radar.config import CountriesConfig
 from ai_hiring_radar.models import SourceMode, SourceName
 from ai_hiring_radar.query_builder import LocationDepth
@@ -252,8 +254,43 @@ def build_raw_teamtailor_response_record(
         "endpoint": endpoint or build_teamtailor_rss_endpoint(board.platform_company_slug),
         "response_format": "rss_xml",
         "collected_at": collected_at,
+        "title_prefilter": _teamtailor_title_prefilter_metadata(response),
         "response": response,
     }
+
+
+def _xml_local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _xml_child_text(element: ET.Element, name: str) -> str | None:
+    for child in element:
+        if _xml_local_name(child.tag) == name:
+            return " ".join(str(child.text or "").split()).strip() or None
+    return None
+
+
+def _teamtailor_items(response: str) -> list[ET.Element]:
+    try:
+        root = ET.fromstring(response)
+    except ET.ParseError:
+        return []
+    if _xml_local_name(root.tag) == "item":
+        return [root]
+    return [element for element in root.iter() if _xml_local_name(element.tag) == "item"]
+
+
+def _teamtailor_title_prefilter_metadata(response: str) -> dict[str, int | str]:
+    items = _teamtailor_items(response)
+    matched_count = sum(
+        1
+        for item in items
+        if is_ai_role_title_candidate(_xml_child_text(item, "title"))
+    )
+    return title_prefilter_metadata(
+        listed_count=len(items),
+        matched_count=matched_count,
+    )
 
 
 def _has_rss_feed_response(response: str) -> bool:

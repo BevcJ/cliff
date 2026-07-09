@@ -11,9 +11,8 @@ from urllib.parse import quote, unquote, urlparse
 import httpx
 
 from ai_hiring_radar.classify import (
-    has_ai_signal,
-    is_excluded_ai_trainer_title,
-    match_known_role,
+    is_ai_role_title_candidate,
+    title_prefilter_metadata,
 )
 from ai_hiring_radar.config import CountriesConfig
 from ai_hiring_radar.models import SourceMode, SourceName
@@ -372,6 +371,7 @@ def build_raw_ashby_response_record(
         "job_detail_endpoint": ASHBY_JOB_POSTING_GRAPHQL_URL,
         "job_detail_operation_name": ASHBY_JOB_POSTING_OPERATION,
         "collected_at": collected_at,
+        "title_prefilter": _ashby_title_prefilter_metadata(response),
         "response": response,
         "job_detail_responses": job_detail_responses or {},
         "job_detail_errors": job_detail_errors or [],
@@ -384,33 +384,17 @@ def _has_job_board(response: dict[str, Any]) -> bool:
 
 
 def _job_posting_ids(response: dict[str, Any]) -> list[str]:
-    data = response.get("data")
-    if not isinstance(data, dict):
-        return []
-    job_board = data.get("jobBoard")
-    if not isinstance(job_board, dict):
-        return []
-    job_postings = job_board.get("jobPostings")
-    if not isinstance(job_postings, list):
-        return []
+    job_postings = _job_postings(response)
 
     job_ids: list[str] = []
     for job in job_postings:
-        if not isinstance(job, dict):
-            continue
         job_id = str(job.get("id") or "").strip()
         if job_id:
             job_ids.append(job_id)
     return job_ids
 
 
-def _is_ashby_detail_candidate_title(value: object | None) -> bool:
-    if is_excluded_ai_trainer_title(value):
-        return False
-    return match_known_role(value) is not None or has_ai_signal(value)
-
-
-def _candidate_job_posting_ids(response: dict[str, Any]) -> list[str]:
+def _job_postings(response: dict[str, Any]) -> list[dict[str, Any]]:
     data = response.get("data")
     if not isinstance(data, dict):
         return []
@@ -420,11 +404,27 @@ def _candidate_job_posting_ids(response: dict[str, Any]) -> list[str]:
     job_postings = job_board.get("jobPostings")
     if not isinstance(job_postings, list):
         return []
+    return [job for job in job_postings if isinstance(job, dict)]
 
+
+def _ashby_title_prefilter_metadata(response: dict[str, Any]) -> dict[str, int | str]:
+    job_postings = _job_postings(response)
+    matched_count = sum(
+        1 for job in job_postings if is_ai_role_title_candidate(job.get("title"))
+    )
+    return title_prefilter_metadata(
+        listed_count=len(job_postings),
+        matched_count=matched_count,
+    )
+
+
+def _is_ashby_detail_candidate_title(value: object | None) -> bool:
+    return is_ai_role_title_candidate(value)
+
+
+def _candidate_job_posting_ids(response: dict[str, Any]) -> list[str]:
     job_ids: list[str] = []
-    for job in job_postings:
-        if not isinstance(job, dict):
-            continue
+    for job in _job_postings(response):
         if not _is_ashby_detail_candidate_title(job.get("title")):
             continue
         job_id = str(job.get("id") or "").strip()

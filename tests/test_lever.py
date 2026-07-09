@@ -81,6 +81,19 @@ def _sample_lever_response() -> list[dict[str, Any]]:
             "lists": [],
         },
         {
+            "id": "job-ai-trainer",
+            "text": "Machine Learning Engineer - AI Trainer - Freelance",
+            "hostedUrl": "https://jobs.lever.co/acme-ai/job-ai-trainer",
+            "categories": {
+                "team": "Engineering",
+                "location": "Amsterdam, Netherlands",
+                "commitment": "Contract",
+            },
+            "description": "<p>Train AI models.</p>",
+            "descriptionPlain": "Train AI models.",
+            "lists": [],
+        },
+        {
             "id": "job-ai-product",
             "text": "AI Product Manager",
             "hostedUrl": "https://jobs.lever.co/acme-ai/job-ai-product",
@@ -259,6 +272,14 @@ def test_collect_lever_boards_writes_raw_response_and_manifest(tmp_path) -> None
     assert raw_record["request_params"] == {"mode": "json"}
     assert raw_record["endpoint"] == "https://api.lever.co/v0/postings/acme-ai?mode=json"
     assert raw_record["api_region"] == "global"
+    assert raw_record["title_prefilter"] == {
+        "mode": "strict_title",
+        "source": "listing_title",
+        "source_field": "text/title",
+        "listed_count": 4,
+        "matched_count": 2,
+        "skipped_count": 2,
+    }
     assert read_json(result.manifest_path)["result_files"] == result.result_files
 
 

@@ -12,9 +12,8 @@ from urllib.parse import quote, unquote, urlparse
 import httpx
 
 from ai_hiring_radar.classify import (
-    has_ai_signal,
-    is_excluded_ai_trainer_title,
-    match_known_role,
+    is_ai_role_title_candidate,
+    title_prefilter_metadata,
 )
 from ai_hiring_radar.config import CountriesConfig
 from ai_hiring_radar.models import SourceMode, SourceName
@@ -277,9 +276,23 @@ def _offer_detail_identifier(offer: dict[str, Any]) -> str | None:
 
 
 def _is_recruitee_detail_candidate_title(value: object | None) -> bool:
-    if is_excluded_ai_trainer_title(value):
-        return False
-    return match_known_role(value) is not None or has_ai_signal(value)
+    return is_ai_role_title_candidate(value)
+
+
+def _recruitee_title_prefilter_metadata(
+    response: dict[str, Any],
+) -> dict[str, int | str]:
+    offers = _offers(response)
+    matched_count = sum(
+        1
+        for offer in offers
+        if is_ai_role_title_candidate(offer.get("title") or offer.get("name"))
+    )
+    return title_prefilter_metadata(
+        listed_count=len(offers),
+        matched_count=matched_count,
+        source_field="title/name",
+    )
 
 
 class RecruiteeClient:
@@ -377,6 +390,7 @@ def build_raw_recruitee_response_record(
         "offer_detail_endpoints": offer_detail_endpoints or {},
         "offer_detail_responses": offer_detail_responses or {},
         "offer_detail_errors": offer_detail_errors or [],
+        "title_prefilter": _recruitee_title_prefilter_metadata(response),
         "collected_at": collected_at,
         "response": response,
     }

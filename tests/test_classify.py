@@ -1,4 +1,9 @@
-from ai_hiring_radar.classify import classify_role, normalize_job_title
+from ai_hiring_radar.classify import (
+    classify_role,
+    is_ai_role_title_candidate,
+    normalize_job_title,
+    title_prefilter_metadata,
+)
 
 
 def test_normalize_job_title_prefers_longest_known_role_match() -> None:
@@ -40,3 +45,24 @@ def test_classify_role_marks_unknown_ai_signal_unclear() -> None:
         )
         == "Unclear AI Role"
     )
+
+
+def test_is_ai_role_title_candidate_uses_strict_title_prefilter() -> None:
+    assert is_ai_role_title_candidate("Senior AI Engineer") is True
+    assert is_ai_role_title_candidate("Head of Artificial Intelligence") is True
+    assert is_ai_role_title_candidate("Backend Engineer") is False
+    assert (
+        is_ai_role_title_candidate("Machine Learning Engineer - AI Trainer - Freelance")
+        is False
+    )
+
+
+def test_title_prefilter_metadata_counts_skipped_titles() -> None:
+    assert title_prefilter_metadata(listed_count=4, matched_count=2) == {
+        "mode": "strict_title",
+        "source": "listing_title",
+        "source_field": "title",
+        "listed_count": 4,
+        "matched_count": 2,
+        "skipped_count": 2,
+    }

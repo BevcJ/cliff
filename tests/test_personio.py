@@ -80,6 +80,14 @@ def _sample_personio_response() -> str:
     <schedule>full-time</schedule>
   </position>
   <position>
+    <id>job-ai-trainer</id>
+    <name>Machine Learning Engineer - AI Trainer - Freelance</name>
+    <office>Amsterdam, Netherlands</office>
+    <department>Engineering</department>
+    <employmentType>contract</employmentType>
+    <schedule>freelance</schedule>
+  </position>
+  <position>
     <id>job-ai-product</id>
     <name>AI Product Manager</name>
     <office>Remote - Netherlands</office>
@@ -235,6 +243,14 @@ def test_collect_personio_boards_writes_raw_response_and_manifest(tmp_path) -> N
     assert raw_record["request_params"] == {"language": "en"}
     assert raw_record["response_format"] == "xml"
     assert raw_record["endpoint"] == "https://acme-ai.jobs.personio.com/xml?language=en"
+    assert raw_record["title_prefilter"] == {
+        "mode": "strict_title",
+        "source": "listing_title",
+        "source_field": "name",
+        "listed_count": 4,
+        "matched_count": 2,
+        "skipped_count": 2,
+    }
     assert read_json(result.manifest_path)["result_files"] == result.result_files
 
 

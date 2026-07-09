@@ -250,6 +250,14 @@ def test_collect_teamtailor_boards_writes_raw_response_and_manifest(tmp_path) ->
     assert raw_record["platform_company_slug"] == "acme-ai"
     assert raw_record["response_format"] == "rss_xml"
     assert raw_record["endpoint"] == "https://acme-ai.teamtailor.com/jobs.rss"
+    assert raw_record["title_prefilter"] == {
+        "mode": "strict_title",
+        "source": "listing_title",
+        "source_field": "title",
+        "listed_count": 3,
+        "matched_count": 2,
+        "skipped_count": 1,
+    }
     assert raw_record["response"] == _sample_teamtailor_response()
     assert read_json(result.manifest_path)["result_files"] == result.result_files
 

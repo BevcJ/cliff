@@ -380,6 +380,14 @@ def test_collect_ashby_boards_writes_raw_response_and_manifest(tmp_path) -> None
     assert raw_record["request_body"]["variables"] == {
         "organizationHostedJobsPageName": "everai"
     }
+    assert raw_record["title_prefilter"] == {
+        "mode": "strict_title",
+        "source": "listing_title",
+        "source_field": "title",
+        "listed_count": 4,
+        "matched_count": 2,
+        "skipped_count": 2,
+    }
     assert sorted(raw_record["job_detail_responses"]) == [
         "job-ai-engineer",
         "job-ai-head",

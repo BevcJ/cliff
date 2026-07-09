@@ -344,6 +344,15 @@ def test_collect_workable_boards_writes_raw_response_and_manifest(tmp_path) -> N
     assert raw_record["response_format"] == "json"
     assert raw_record["endpoint"] == "https://apply.workable.com/api/v3/accounts/acme-ai/jobs"
     assert raw_record["account_response"] == {"name": "Acme AI"}
+    assert raw_record["title_prefilter"] == {
+        "mode": "strict_title",
+        "source": "listing_title",
+        "source_field": "title/name",
+        "listed_count": 3,
+        "matched_count": 2,
+        "skipped_count": 1,
+        "eligible_count": 3,
+    }
     assert raw_record["job_detail_responses"]["AIENG"]["description"] == (
         "<p>Build AI systems.</p>"
     )

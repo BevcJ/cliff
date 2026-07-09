@@ -284,6 +284,14 @@ def test_collect_smartrecruiters_boards_writes_raw_response_and_manifest(tmp_pat
         "https://api.smartrecruiters.com/v1/companies/acme-ai/postings"
         "?limit=100&offset=0"
     )
+    assert raw_record["title_prefilter"] == {
+        "mode": "strict_title",
+        "source": "listing_title",
+        "source_field": "name/title",
+        "listed_count": 3,
+        "matched_count": 2,
+        "skipped_count": 1,
+    }
     assert raw_record["response"] == _sample_smartrecruiters_response()
     assert read_json(result.manifest_path)["result_files"] == result.result_files
 

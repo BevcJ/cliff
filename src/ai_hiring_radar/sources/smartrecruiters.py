@@ -9,6 +9,7 @@ from urllib.parse import quote, unquote, urlencode, urlparse
 
 import httpx
 
+from ai_hiring_radar.classify import is_ai_role_title_candidate, title_prefilter_metadata
 from ai_hiring_radar.config import CountriesConfig
 from ai_hiring_radar.models import SourceMode, SourceName
 from ai_hiring_radar.query_builder import LocationDepth
@@ -265,6 +266,32 @@ def _integer_value(value: object | None) -> int | None:
     return None
 
 
+def _smartrecruiters_postings(response: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    postings: list[dict[str, Any]] = []
+    for page in response:
+        content = page.get("content")
+        if not isinstance(content, list):
+            continue
+        postings.extend(item for item in content if isinstance(item, dict))
+    return postings
+
+
+def _smartrecruiters_title_prefilter_metadata(
+    response: list[dict[str, Any]],
+) -> dict[str, int | str]:
+    postings = _smartrecruiters_postings(response)
+    matched_count = sum(
+        1
+        for posting in postings
+        if is_ai_role_title_candidate(posting.get("name") or posting.get("title"))
+    )
+    return title_prefilter_metadata(
+        listed_count=len(postings),
+        matched_count=matched_count,
+        source_field="name/title",
+    )
+
+
 class SmartRecruitersClient:
     def __init__(
         self,
@@ -364,6 +391,7 @@ def build_raw_smartrecruiters_response_record(
         "page_endpoints": page_endpoints or [first_endpoint],
         "request_params": params,
         "response_format": "json",
+        "title_prefilter": _smartrecruiters_title_prefilter_metadata(response),
         "collected_at": collected_at,
         "response": response,
     }

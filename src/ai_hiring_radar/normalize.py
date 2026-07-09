@@ -13,8 +13,7 @@ from ai_hiring_radar.aggregate import aggregate_companies
 from ai_hiring_radar.classify import (
     classify_role,
     clean_text,
-    has_ai_signal,
-    is_excluded_ai_trainer_title,
+    is_ai_role_title_candidate,
     match_known_role,
     normalize_job_title,
 )
@@ -496,9 +495,7 @@ def normalize_ashby_job_posting(
     job_title_raw = _clean_optional(job.get("title"))
     if job_title_raw is None:
         return None
-    if is_excluded_ai_trainer_title(job_title_raw):
-        return None
-    if match_known_role(job_title_raw) is None and not has_ai_signal(job_title_raw):
+    if not is_ai_role_title_candidate(job_title_raw):
         return None
 
     platform_company_slug = clean_text(metadata.get("platform_company_slug"))
@@ -680,7 +677,7 @@ def normalize_greenhouse_job(
     job_title_raw = _clean_optional(job.get("title"))
     if job_title_raw is None:
         return None
-    if match_known_role(job_title_raw) is None and not has_ai_signal(job_title_raw):
+    if not is_ai_role_title_candidate(job_title_raw):
         return None
 
     platform_company_slug = clean_text(metadata.get("platform_company_slug"))
@@ -797,7 +794,7 @@ def normalize_lever_posting(
     job_title_raw = _clean_optional(job.get("text") or job.get("title"))
     if job_title_raw is None:
         return None
-    if match_known_role(job_title_raw) is None and not has_ai_signal(job_title_raw):
+    if not is_ai_role_title_candidate(job_title_raw):
         return None
 
     platform_company_slug = clean_text(metadata.get("platform_company_slug"))
@@ -973,9 +970,7 @@ def normalize_smartrecruiters_posting(
     job_title_raw = _clean_optional(job.get("name") or job.get("title"))
     if job_title_raw is None:
         return None
-    if is_excluded_ai_trainer_title(job_title_raw):
-        return None
-    if match_known_role(job_title_raw) is None and not has_ai_signal(job_title_raw):
+    if not is_ai_role_title_candidate(job_title_raw):
         return None
 
     platform_company_slug = clean_text(metadata.get("platform_company_slug"))
@@ -1333,9 +1328,7 @@ def normalize_recruitee_offer(
     job_title_raw = _recruitee_record_value(records, "title", "name")
     if job_title_raw is None:
         return None
-    if is_excluded_ai_trainer_title(job_title_raw):
-        return None
-    if match_known_role(job_title_raw) is None and not has_ai_signal(job_title_raw):
+    if not is_ai_role_title_candidate(job_title_raw):
         return None
 
     board_url = clean_text(metadata.get("board_url")) or (
@@ -1576,9 +1569,7 @@ def normalize_teamtailor_item(
     job_title_raw = _xml_child_text(item, "title")
     if job_title_raw is None:
         return None
-    if is_excluded_ai_trainer_title(job_title_raw):
-        return None
-    if match_known_role(job_title_raw) is None and not has_ai_signal(job_title_raw):
+    if not is_ai_role_title_candidate(job_title_raw):
         return None
 
     platform_company_slug = clean_text(metadata.get("platform_company_slug"))
@@ -1731,7 +1722,7 @@ def normalize_personio_position(
     job_title_raw = _xml_child_text(position, "name")
     if job_title_raw is None:
         return None
-    if match_known_role(job_title_raw) is None and not has_ai_signal(job_title_raw):
+    if not is_ai_role_title_candidate(job_title_raw):
         return None
 
     platform_company_slug = clean_text(metadata.get("platform_company_slug"))

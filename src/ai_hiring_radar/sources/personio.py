@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -9,6 +10,7 @@ from urllib.parse import quote, unquote, urlparse
 
 import httpx
 
+from ai_hiring_radar.classify import is_ai_role_title_candidate, title_prefilter_metadata
 from ai_hiring_radar.config import CountriesConfig
 from ai_hiring_radar.models import SourceMode, SourceName
 from ai_hiring_radar.query_builder import LocationDepth
@@ -274,8 +276,46 @@ def build_raw_personio_response_record(
         "request_params": {"language": language},
         "response_format": "xml",
         "collected_at": collected_at,
+        "title_prefilter": _personio_title_prefilter_metadata(response),
         "response": response,
     }
+
+
+def _xml_local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _xml_child_text(element: ET.Element, name: str) -> str | None:
+    for child in element:
+        if _xml_local_name(child.tag) == name:
+            return " ".join(str(child.text or "").split()).strip() or None
+    return None
+
+
+def _personio_positions(response: str) -> list[ET.Element]:
+    try:
+        root = ET.fromstring(response)
+    except ET.ParseError:
+        return []
+    if _xml_local_name(root.tag) == "position":
+        return [root]
+    return [
+        element for element in root.iter() if _xml_local_name(element.tag) == "position"
+    ]
+
+
+def _personio_title_prefilter_metadata(response: str) -> dict[str, int | str]:
+    positions = _personio_positions(response)
+    matched_count = sum(
+        1
+        for position in positions
+        if is_ai_role_title_candidate(_xml_child_text(position, "name"))
+    )
+    return title_prefilter_metadata(
+        listed_count=len(positions),
+        matched_count=matched_count,
+        source_field="name",
+    )
 
 
 def _has_xml_feed_response(response: str) -> bool:

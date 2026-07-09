@@ -9,6 +9,7 @@ from urllib.parse import quote, unquote, urlparse
 
 import httpx
 
+from ai_hiring_radar.classify import is_ai_role_title_candidate, title_prefilter_metadata
 from ai_hiring_radar.config import CountriesConfig
 from ai_hiring_radar.models import SourceMode, SourceName
 from ai_hiring_radar.query_builder import LocationDepth
@@ -254,8 +255,27 @@ def build_raw_greenhouse_response_record(
         "endpoint": build_greenhouse_jobs_endpoint(board.platform_company_slug),
         "request_params": {"content": "true"},
         "collected_at": collected_at,
+        "title_prefilter": _greenhouse_title_prefilter_metadata(response),
         "response": response,
     }
+
+
+def _greenhouse_jobs(response: dict[str, Any]) -> list[dict[str, Any]]:
+    jobs = response.get("jobs")
+    if not isinstance(jobs, list):
+        return []
+    return [job for job in jobs if isinstance(job, dict)]
+
+
+def _greenhouse_title_prefilter_metadata(response: dict[str, Any]) -> dict[str, int | str]:
+    jobs = _greenhouse_jobs(response)
+    matched_count = sum(
+        1 for job in jobs if is_ai_role_title_candidate(job.get("title"))
+    )
+    return title_prefilter_metadata(
+        listed_count=len(jobs),
+        matched_count=matched_count,
+    )
 
 
 def _has_jobs_response(response: dict[str, Any]) -> bool:
