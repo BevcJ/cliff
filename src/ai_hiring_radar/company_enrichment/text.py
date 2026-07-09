@@ -66,6 +66,7 @@ def is_ats_url(value: object | None) -> bool:
         or host == "jobs.personio.com"
         or host == "jobs.ashbyhq.com"
         or host == "jobs.lever.co"
+        or host.endswith(".teamtailor.com")
         or host == "boards.greenhouse.io"
         or host == "job-boards.greenhouse.io"
         or (host.endswith(".greenhouse.io") and "/jobs/" in path)
