@@ -22,6 +22,7 @@ class SourceName(StrEnum):
     LEVER = "lever"
     PERSONIO = "personio"
     RECRUITEE = "recruitee"
+    TEAMTAILOR = "teamtailor"
     SMARTRECRUITERS = "smartrecruiters"
     WORKABLE = "workable"
 

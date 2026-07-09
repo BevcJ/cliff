@@ -557,3 +557,37 @@ def test_launch_inspection_app_runs_streamlit_module(monkeypatch) -> None:
     assert command[:4] == [sys.executable, "-m", "streamlit", "run"]
     assert command[-3:] == ["--", "--date", "2026-07-02"]
     assert command[4].endswith("inspection_app.py")
+
+
+def test_discover_teamtailor_dry_run_prints_queries() -> None:
+    result = runner.invoke(
+        cli.app,
+        [
+            "discover-teamtailor",
+            "--countries",
+            "nl",
+            "--limit",
+            "1",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Generated 1 Teamtailor discovery queries." in result.output
+    assert "site:*.teamtailor.com" in result.output
+
+
+def test_collect_teamtailor_board_url_dry_run_prints_normalized_board() -> None:
+    result = runner.invoke(
+        cli.app,
+        [
+            "collect-teamtailor",
+            "--board-url",
+            "https://acme.teamtailor.com/jobs/123-ai-engineer",
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Normalized 1 Teamtailor board URL(s)." in result.output
+    assert "https://acme.teamtailor.com" in result.output

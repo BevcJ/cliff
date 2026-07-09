@@ -74,6 +74,47 @@ non-public, inactive, internal, or hidden by provider visibility fields.
 Preserve the full raw listing response before transformation. Limit only the
 additional per-job detail responses to candidate jobs to reduce request volume
 and avoid collecting unnecessary non-target descriptions.
+## Title And Description Handling
+
+The default integration target is title plus job-description data.
+
+For every provider, explicitly determine whether public listing, feed, or detail
+responses include job descriptions. When descriptions are available from public
+provider data, preserve and normalize them. Title-only behavior should be treated
+as a fallback for providers or endpoints where descriptions are unavailable,
+incomplete, or would require fragile detail-page scraping outside the agreed
+scope.
+
+The plan and implementation should cover:
+
+- Whether descriptions are present in the listing/feed response.
+- Whether public detail fetching is needed to retrieve descriptions.
+- Whether detail fetching is stable and worth the added complexity for this provider.
+- Which description fields are stored, for example `description`, `description_html`, `description_plain`, `job_description_sections`, or provider-specific sections.
+- Whether raw provider responses are preserved unchanged before any description cleanup.
+- Whether descriptions are useful for `extract-job-descriptions`.
+- Whether company enrichment still receives only compact candidate context and not full job descriptions.
+
+Default behavior:
+
+- Use job titles and provider-supplied descriptions when available from public data.
+- Use title-only candidate records only when job descriptions are not available or are intentionally out of scope for the provider.
+- Keep raw HTML or provider-native sections when useful for audit or replay.
+- Add cleaned text to `description` when practical.
+- Do not use private/admin APIs, copied cookies, or authenticated endpoints to get descriptions.
+- Do not fetch fragile detail pages only for completeness unless the provider report or user scope justifies it.
+
+Preferred wording:
+
+```text
+Title and job-description integration where public descriptions are available.
+```
+
+Fallback wording:
+
+```text
+Title-only fallback because public job descriptions are unavailable or out of scope.
+```
 
 ## Planning Checklist
 
@@ -86,6 +127,7 @@ The plan presented to the user should cover:
 - Request headers, params, pagination, region/language handling, and rate limits.
 - Raw response storage path and wrapper fields.
 - Job normalization into the existing `job_candidate` schema.
+- Title and job-description availability, normalization, and fallback behavior.
 - Country inference from provider job-location data only.
 - Dedupe identity using `source + platform_company_slug + platform_job_id`.
 - CLI commands to add.
@@ -131,15 +173,15 @@ Provider source files usually include, in this order:
 9. `collect_{provider}_boards()` writing raw files and `manifest.json`.
 
 Normalization usually adds provider-specific helpers for postings, title, job ID,
-source URL, team/department, location, description, visibility, and country inputs.
-It should filter to title-level AI signals, skip inactive/internal/hidden jobs,
-exclude hidden locations from normalized location fields, infer country from
-provider job-location data, use stable IDs from provider identity, and return
-existing `job_candidate` fields.
+source URL, team/department, location, description fields, and country inputs.
+It should preserve provider-supplied descriptions when available, infer country
+from provider job-location data, use stable IDs from provider identity, and return
+existing `job_candidate` fields. Title-only normalization should be used only as a
+fallback when public descriptions are unavailable or intentionally out of scope.
 
 Tests should cover URL parsing, discovery extraction, client request shape, raw
-wrapper and manifest writing, detail prefiltering for non-candidate titles,
-title-only AI filtering, visibility filtering, country inference, and
+wrapper and manifest writing, title and description normalization, title-only
+fallback behavior when descriptions are unavailable, country inference, and
 `process_collection()` inclusion.
 
 ## Implementation Rules
@@ -157,6 +199,7 @@ After user approval:
 ## Done Criteria
 
 The integration is complete when it can discover public boards, fetch current
-public listings, store raw evidence, normalize title-only AI job candidates,
-participate in processing/dedupe/aggregation, expose CLI commands, and pass the
-relevant tests.
+public listings, store raw evidence, normalize AI job candidates with titles and
+provider-supplied descriptions where available, fall back to title-only records
+when descriptions are unavailable, participate in processing/dedupe/aggregation,
+expose CLI commands, and pass the relevant tests.

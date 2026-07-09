@@ -1,6 +1,6 @@
 # AI Hiring Radar
 
-Title-only MVP for discovering European companies with hiring signals for AI execution and AI product roles.
+MVP for discovering European companies with hiring signals for AI execution and AI product roles. AI candidate inclusion is title-based, and ATS job descriptions are retained when public provider feeds or APIs include them.
 
 ## Setup
 
@@ -38,6 +38,9 @@ uv run ai-hiring-radar collect-recruitee --board-url https://acme.recruitee.com
 uv run ai-hiring-radar discover-workable --countries nl --dry-run
 uv run ai-hiring-radar collect-workable --countries nl
 uv run ai-hiring-radar collect-workable --board-url https://apply.workable.com/workmotion
+uv run ai-hiring-radar discover-teamtailor --countries nl --dry-run
+uv run ai-hiring-radar collect-teamtailor --countries nl
+uv run ai-hiring-radar collect-teamtailor --board-url https://career.teamtailor.com
 uv run ai-hiring-radar debug-ashby-discovery --sample 5 --json
 uv run ai-hiring-radar process --date YYYY-MM-DD
 uv run ai-hiring-radar extract-job-descriptions --date YYYY-MM-DD --dry-run
@@ -59,7 +62,7 @@ Collection uses Serper Google Search and stores raw, self-describing JSON wrappe
 
 Use `--location-depth cities` for deeper Netherlands-only coverage across configured city/location variants. The default remains `--location-depth country`.
 
-Processing reads those raw wrappers, writes deduplicated candidates to `data/processed/job_candidates_YYYY-MM-DD.jsonl`, aggregates parseable companies to `data/processed/companies_YYYY-MM-DD.jsonl`, and exports review files under `data/exports/`.
+Processing reads those raw wrappers, writes deduplicated candidates to `data/processed/job_candidates_YYYY-MM-DD.jsonl`, aggregates parseable companies to `data/processed/companies_YYYY-MM-DD.jsonl`, and exports review files under `data/exports/`. ATS candidates may include provider-supplied job descriptions, but AI role filtering remains based on job titles.
 
 Job description extraction is a separate step after `process`. It reads `data/processed/job_candidates_YYYY-MM-DD.jsonl`, calls a Pydantic AI structured-output extractor for candidates with useful ATS/job-description data, and writes compact records to `data/processed/job_description_extracts_YYYY-MM-DD.jsonl`. The extraction output includes model/prompt metadata and structured datapoints, but intentionally does not include full job description text, evidence snippets, raw LLM responses, or confidence scores. Progress is shown by default with `tqdm`; use `--no-progress` for quiet runs. Successful records are appended immediately, and reruns resume by skipping existing `job_id`s. Use `--countries nl,dk` to extract only jobs matching any selected country code before broadening to the full set later. Use `--restart` to clear existing extracts first. Use `--dry-run` to count processable candidates without model calls or output writes.
 
@@ -80,6 +83,8 @@ Recruitee collection uses the same discovery flow against `site:*.recruitee.com`
 Personio collection uses the same discovery flow against `site:*.jobs.personio.com`, then fetches the public XML feed from `https://{company_slug}.jobs.personio.com/xml?language=en`. Raw XML is stored in JSON wrappers under `data/raw/ats/YYYY-MM-DD/personio/` and is included by `process` before dedupe and company aggregation.
 
 Workable collection uses the same discovery flow against `site:apply.workable.com`, then fetches public hosted-careers JSON from `https://apply.workable.com/api/v3/accounts/{company_slug}/jobs` and per-job details from `https://apply.workable.com/api/v2/accounts/{company_slug}/jobs/{shortcode}`. Raw listing and detail responses are stored under `data/raw/ats/YYYY-MM-DD/workable/` and are included by `process` before dedupe and company aggregation.
+
+Teamtailor collection uses the same discovery flow against `site:*.teamtailor.com`, then fetches the public RSS feed from `https://{company_slug}.teamtailor.com/jobs.rss`. Raw RSS XML is stored in JSON wrappers under `data/raw/ats/YYYY-MM-DD/teamtailor/`, and RSS item descriptions, locations, departments, roles, divisions, remote status, publish dates, and job URLs are normalized before processing, dedupe, and company aggregation.
 
 ## Streamlit Cloud Deployment
 

@@ -25,6 +25,7 @@ from ai_hiring_radar.company_enrichment import (
     run_company_enrichment,
     sanitize_low_trust_named_contact_emails,
 )
+from ai_hiring_radar.company_enrichment.text import is_ats_url
 from ai_hiring_radar.llm_usage import LLMCallResult, LLMUsage
 from ai_hiring_radar.storage_json import read_jsonl, write_processed_jsonl
 
@@ -369,6 +370,10 @@ def test_quality_error_rejects_empty_job_board_only_results() -> None:
         "No non-ATS source URL returned; web search likely did not verify "
         "company-level facts."
     )
+
+
+def test_teamtailor_urls_are_ats_urls() -> None:
+    assert is_ats_url("https://acme.teamtailor.com/jobs/123-ai-engineer") is True
 
 
 def test_quality_retry_requests_contact_research_for_name_only_contacts() -> None:
