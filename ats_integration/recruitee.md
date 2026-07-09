@@ -86,3 +86,10 @@ Common detail fields include:
 - No authentication is required for public offers.
 - The detail endpoint is recommended because listing responses may omit full descriptions.
 - Custom domains can still use the same `/api/offers/` path.
+
+## Implemented Connector Notes
+
+- Discovery targets `site:*.recruitee.com` and normalizes boards to `https://{company_slug}.recruitee.com`.
+- Collection stores raw wrappers under `data/raw/ats/YYYY-MM-DD/recruitee/`.
+- The raw wrapper keeps the listing response in `response`, per-offer detail responses in `offer_detail_responses`, detail endpoint URLs in `offer_detail_endpoints`, and partial detail failures in `offer_detail_errors`.
+- Processing keeps title-level AI filtering, then normalizes job descriptions from detail `description`, `requirements`, and `description_requirements` fields when available.

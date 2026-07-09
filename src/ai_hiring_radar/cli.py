@@ -79,6 +79,17 @@ from ai_hiring_radar.sources.personio import (
     generate_personio_discovery_queries,
     normalize_personio_board,
 )
+from ai_hiring_radar.sources.recruitee import (
+    DEFAULT_RECRUITEE_DISCOVERY_PAGES,
+    DEFAULT_RECRUITEE_DISCOVERY_RESULTS_PER_QUERY,
+    MAX_RECRUITEE_DISCOVERY_RESULTS_PER_QUERY,
+    RecruiteeClient,
+    RecruiteeDiscoveryDepth,
+    collect_recruitee_boards,
+    discover_recruitee_boards,
+    generate_recruitee_discovery_queries,
+    normalize_recruitee_board,
+)
 from ai_hiring_radar.sources.smartrecruiters import (
     DEFAULT_SMARTRECRUITERS_DISCOVERY_PAGES,
     DEFAULT_SMARTRECRUITERS_DISCOVERY_RESULTS_PER_QUERY,
@@ -363,6 +374,40 @@ def _build_personio_discovery_queries(
 
 def _print_personio_discovery_queries(search_queries) -> None:  # noqa: ANN001
     console.print(f"Generated {len(search_queries)} Personio discovery queries.")
+    for index, search_query in enumerate(search_queries, start=1):
+        console.print(
+            f"{index}. "
+            f"[{search_query.country_code}/{search_query.search_location_label}] "
+            f"{search_query.discovery_query_type} "
+            f"page={search_query.page} "
+            f"{search_query.search_query}",
+            markup=False,
+        )
+
+
+def _build_recruitee_discovery_queries(
+    *,
+    country_codes: list[str],
+    limit: int | None = None,
+    location_depth: LocationDepth = LocationDepth.CITIES,
+    discovery_depth: RecruiteeDiscoveryDepth = RecruiteeDiscoveryDepth.EXHAUSTIVE,
+    results_per_query: int = DEFAULT_RECRUITEE_DISCOVERY_RESULTS_PER_QUERY,
+    pages: int = DEFAULT_RECRUITEE_DISCOVERY_PAGES,
+):
+    return generate_recruitee_discovery_queries(
+        countries_config=load_countries_config(),
+        country_codes=country_codes,
+        limit=limit,
+        num=results_per_query,
+        pages=pages,
+        location_depth=location_depth,
+        discovery_depth=discovery_depth,
+        role_terms=load_taxonomy_config().all_roles,
+    )
+
+
+def _print_recruitee_discovery_queries(search_queries) -> None:  # noqa: ANN001
+    console.print(f"Generated {len(search_queries)} Recruitee discovery queries.")
     for index, search_query in enumerate(search_queries, start=1):
         console.print(
             f"{index}. "
@@ -1390,6 +1435,233 @@ def collect_personio(
 
     console.print(
         "Personio collection complete: "
+        f"{result.successful_count}/{result.board_count} raw board file(s) written; "
+        f"{result.error_count} error(s)."
+    )
+    console.print(f"Manifest: {result.manifest_path.as_posix()}")
+
+
+@app.command("discover-recruitee")
+def discover_recruitee(
+    countries: Annotated[
+        str,
+        typer.Option(
+            "--countries",
+            help="Comma-separated country codes for Recruitee board discovery.",
+        ),
+    ] = "nl,uk,dk",
+    limit: Annotated[
+        int | None,
+        typer.Option(
+            "--limit",
+            min=1,
+            help="Limit the number of generated discovery queries.",
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Print generated Recruitee discovery queries without calling Serper.",
+        ),
+    ] = False,
+    location_depth: Annotated[
+        str,
+        typer.Option(
+            "--location-depth",
+            help="Search location depth: country or cities.",
+        ),
+    ] = LocationDepth.CITIES.value,
+    discovery_depth: Annotated[
+        str,
+        typer.Option(
+            "--discovery-depth",
+            help="Recruitee discovery depth: standard, broad, or exhaustive.",
+        ),
+    ] = RecruiteeDiscoveryDepth.EXHAUSTIVE.value,
+    results_per_query: Annotated[
+        int,
+        typer.Option(
+            "--results-per-query",
+            min=1,
+            max=MAX_RECRUITEE_DISCOVERY_RESULTS_PER_QUERY,
+            help="Serper results requested per Recruitee discovery query.",
+        ),
+    ] = DEFAULT_RECRUITEE_DISCOVERY_RESULTS_PER_QUERY,
+    pages: Annotated[
+        int,
+        typer.Option(
+            "--pages",
+            min=1,
+            help="Serper result pages requested per Recruitee discovery query.",
+        ),
+    ] = DEFAULT_RECRUITEE_DISCOVERY_PAGES,
+) -> None:
+    """Discover public Recruitee board URLs through search-index queries."""
+    country_codes = _parse_country_codes(countries)
+    parsed_location_depth = _parse_location_depth(location_depth)
+    parsed_discovery_depth = _parse_ats_discovery_depth(discovery_depth)
+    discovery_queries = _build_recruitee_discovery_queries(
+        country_codes=country_codes,
+        limit=limit,
+        location_depth=parsed_location_depth,
+        discovery_depth=parsed_discovery_depth,
+        results_per_query=results_per_query,
+        pages=pages,
+    )
+
+    if dry_run:
+        _print_recruitee_discovery_queries(discovery_queries)
+        return
+
+    try:
+        api_key = require_serper_api_key()
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    client = SerperGoogleClient(api_key=api_key)
+    try:
+        result = discover_recruitee_boards(discovery_queries, client=client)
+    finally:
+        client.close()
+
+    console.print(
+        "Recruitee discovery complete: "
+        f"{result.board_count} board(s), "
+        f"{result.query_count} querie(s), "
+        f"{result.error_count} error(s)."
+    )
+    console.print(f"Boards: {result.boards_path.as_posix()}")
+    console.print(f"Manifest: {result.manifest_path.as_posix()}")
+
+
+@app.command("collect-recruitee")
+def collect_recruitee(
+    countries: Annotated[
+        str,
+        typer.Option(
+            "--countries",
+            help="Comma-separated country codes for Recruitee board discovery.",
+        ),
+    ] = "nl,uk,dk",
+    board_url: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--board-url",
+            help="Recruitee board URL or company slug. Can be repeated to skip discovery.",
+        ),
+    ] = None,
+    limit: Annotated[
+        int | None,
+        typer.Option(
+            "--limit",
+            min=1,
+            help="Limit the number of generated discovery queries.",
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Print discovery queries or board URLs without fetching Recruitee.",
+        ),
+    ] = False,
+    location_depth: Annotated[
+        str,
+        typer.Option(
+            "--location-depth",
+            help="Search location depth: country or cities.",
+        ),
+    ] = LocationDepth.CITIES.value,
+    discovery_depth: Annotated[
+        str,
+        typer.Option(
+            "--discovery-depth",
+            help="Recruitee discovery depth: standard, broad, or exhaustive.",
+        ),
+    ] = RecruiteeDiscoveryDepth.EXHAUSTIVE.value,
+    results_per_query: Annotated[
+        int,
+        typer.Option(
+            "--results-per-query",
+            min=1,
+            max=MAX_RECRUITEE_DISCOVERY_RESULTS_PER_QUERY,
+            help="Serper results requested per Recruitee discovery query.",
+        ),
+    ] = DEFAULT_RECRUITEE_DISCOVERY_RESULTS_PER_QUERY,
+    pages: Annotated[
+        int,
+        typer.Option(
+            "--pages",
+            min=1,
+            help="Serper result pages requested per Recruitee discovery query.",
+        ),
+    ] = DEFAULT_RECRUITEE_DISCOVERY_PAGES,
+) -> None:
+    """Discover Recruitee boards and collect public job listings with details."""
+    manual_board_values = board_url or []
+    parsed_boards = [normalize_recruitee_board(value) for value in manual_board_values]
+
+    if parsed_boards:
+        board_values = [board.board_url for board in parsed_boards]
+        if dry_run:
+            console.print(f"Normalized {len(board_values)} Recruitee board URL(s).")
+            for value in board_values:
+                console.print(value, markup=False)
+            return
+    else:
+        country_codes = _parse_country_codes(countries)
+        parsed_location_depth = _parse_location_depth(location_depth)
+        parsed_discovery_depth = _parse_ats_discovery_depth(discovery_depth)
+        discovery_queries = _build_recruitee_discovery_queries(
+            country_codes=country_codes,
+            limit=limit,
+            location_depth=parsed_location_depth,
+            discovery_depth=parsed_discovery_depth,
+            results_per_query=results_per_query,
+            pages=pages,
+        )
+
+        if dry_run:
+            _print_recruitee_discovery_queries(discovery_queries)
+            return
+
+        try:
+            api_key = require_serper_api_key()
+        except RuntimeError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
+
+        search_client = SerperGoogleClient(api_key=api_key)
+        try:
+            discovery_result = discover_recruitee_boards(
+                discovery_queries,
+                client=search_client,
+            )
+        finally:
+            search_client.close()
+
+        board_values = [str(record["board_url"]) for record in discovery_result.boards]
+        console.print(
+            "Recruitee discovery complete: "
+            f"{discovery_result.board_count} board(s), "
+            f"{discovery_result.error_count} error(s)."
+        )
+        console.print(f"Boards: {discovery_result.boards_path.as_posix()}")
+
+    if not board_values:
+        console.print("No Recruitee boards to collect.")
+        return
+
+    recruitee_client = RecruiteeClient()
+    try:
+        result = collect_recruitee_boards(board_values, client=recruitee_client)
+    finally:
+        recruitee_client.close()
+
+    console.print(
+        "Recruitee collection complete: "
         f"{result.successful_count}/{result.board_count} raw board file(s) written; "
         f"{result.error_count} error(s)."
     )

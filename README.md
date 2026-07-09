@@ -32,6 +32,9 @@ uv run ai-hiring-radar collect-lever --board-url https://jobs.lever.co/insideron
 uv run ai-hiring-radar discover-personio --countries nl --dry-run
 uv run ai-hiring-radar collect-personio --countries nl
 uv run ai-hiring-radar collect-personio --board-url https://acme.jobs.personio.com
+uv run ai-hiring-radar discover-recruitee --countries nl --dry-run
+uv run ai-hiring-radar collect-recruitee --countries nl
+uv run ai-hiring-radar collect-recruitee --board-url https://acme.recruitee.com
 uv run ai-hiring-radar debug-ashby-discovery --sample 5 --json
 uv run ai-hiring-radar process --date YYYY-MM-DD
 uv run ai-hiring-radar extract-job-descriptions --date YYYY-MM-DD --dry-run
@@ -68,6 +71,8 @@ Company enrichment uses `COMPANY_ENRICHMENT_MODEL` directly as the Azure deploym
 Ashby collection discovers public boards through exhaustive Serper query families such as `site:jobs.ashbyhq.com`, `site:jobs.ashbyhq.com "Netherlands"`, `site:jobs.ashbyhq.com "AI Engineer"`, `site:jobs.ashbyhq.com "LLM" "Netherlands"`, and `site:jobs.ashbyhq.com "AI Engineer" "Amsterdam"`. By default it uses configured city locations, broad AI terms, v1 role terms, 10 results per query, and 2 result pages. Use `--discovery-depth broad` or `--discovery-depth standard` to reduce query volume. It fetches each discovered board through Ashby's public hosted job-board endpoint, attempts per-job detail retrieval for full descriptions, and stores raw board responses under `data/raw/ats/YYYY-MM-DD/ashby/`. Detail retrieval failures are recorded per job and do not fail the whole board collection. Processing includes Ashby candidates alongside Serper candidates. Use `debug-ashby-discovery` to print a paste-friendly summary of discovery errors from the latest manifest.
 
 Lever collection uses the same discovery flow against `site:jobs.lever.co`, then fetches public postings from `https://api.lever.co/v0/postings/{site_slug}?mode=json` with an EU API fallback. Raw board responses are stored under `data/raw/ats/YYYY-MM-DD/lever/` and are included by `process` before dedupe and company aggregation.
+
+Recruitee collection uses the same discovery flow against `site:*.recruitee.com`, then fetches public offers from `https://{company_slug}.recruitee.com/api/offers/` plus per-offer details from `/api/offers/{offer_id}` for job descriptions when available. Raw board responses are stored under `data/raw/ats/YYYY-MM-DD/recruitee/` and are included by `process` before dedupe and company aggregation.
 
 Personio collection uses the same discovery flow against `site:*.jobs.personio.com`, then fetches the public XML feed from `https://{company_slug}.jobs.personio.com/xml?language=en`. Raw XML is stored in JSON wrappers under `data/raw/ats/YYYY-MM-DD/personio/` and is included by `process` before dedupe and company aggregation.
 

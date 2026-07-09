@@ -63,6 +63,7 @@ def is_ats_url(value: object | None) -> bool:
             "jobs.smartrecruiters.com",
         }
         or host.endswith(".jobs.personio.com")
+        or host.endswith(".recruitee.com")
         or host == "jobs.personio.com"
         or host == "jobs.ashbyhq.com"
         or host == "jobs.lever.co"
