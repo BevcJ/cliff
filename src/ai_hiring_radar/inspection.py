@@ -43,6 +43,9 @@ class CompanyInspectionDataset:
     paths: InspectionInputPaths
     missing_optional_files: list[Path]
     counts: InspectionLoadCounts
+    data_source: str = "jsonl"
+    fallback_warning: str | None = None
+    synced_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -174,7 +177,7 @@ def export_company_inspection_artifact(
 ) -> InspectionArtifactResult:
     normalized_date = format_date(collection_date)
     dataset = _load_full_company_inspection_data(normalized_date, data_dir=data_dir)
-    records = [_compact_inspection_record(record) for record in dataset.records]
+    records = [compact_company_inspection_record(record) for record in dataset.records]
     path = write_processed_jsonl(
         inspection_artifact_filename(normalized_date),
         records,
@@ -186,6 +189,11 @@ def export_company_inspection_artifact(
         company_count=len(records),
         job_count=sum(len(record.get("jobs") or []) for record in records),
     )
+
+
+def compact_company_inspection_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Return the safe compact inspection shape used by artifacts and DB snapshots."""
+    return _compact_inspection_record(record)
 
 
 def inspection_artifact_filename(collection_date: str) -> str:

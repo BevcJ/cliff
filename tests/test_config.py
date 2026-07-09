@@ -2,6 +2,7 @@ from ai_hiring_radar.config import (
     Settings,
     load_countries_config,
     load_taxonomy_config,
+    require_inspection_database_url,
 )
 
 
@@ -45,6 +46,7 @@ def test_settings_loads_job_description_extraction_model_from_environment(
     monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure-key")
     monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-5.4-mini")
     monkeypatch.setenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
+    monkeypatch.setenv("AI_HIRING_RADAR_DATABASE_URL", "postgresql://inspection-db")
 
     settings = Settings()
 
@@ -57,6 +59,7 @@ def test_settings_loads_job_description_extraction_model_from_environment(
     assert settings.azure_openai_api_key == "azure-key"
     assert settings.azure_openai_deployment_name == "gpt-5.4-mini"
     assert settings.azure_openai_api_version == "2025-04-01-preview"
+    assert settings.inspection_database_url == "postgresql://inspection-db"
 
 
 def test_settings_can_be_created_with_field_name() -> None:
@@ -65,6 +68,7 @@ def test_settings_can_be_created_with_field_name() -> None:
         job_description_extraction_model="test-model",
         job_description_extraction_provider="azure",
         company_enrichment_model="gpt-5-mini",
+        inspection_database_url="postgresql://inspection-db",
         azure_openai_endpoint="https://example.openai.azure.com/",
         azure_openai_api_key="azure-key",
         azure_openai_deployment_name="deployment",
@@ -75,7 +79,14 @@ def test_settings_can_be_created_with_field_name() -> None:
     assert settings.job_description_extraction_model == "test-model"
     assert settings.job_description_extraction_provider == "azure"
     assert settings.company_enrichment_model == "gpt-5-mini"
+    assert settings.inspection_database_url == "postgresql://inspection-db"
     assert settings.azure_openai_endpoint == "https://example.openai.azure.com/"
     assert settings.azure_openai_api_key == "azure-key"
     assert settings.azure_openai_deployment_name == "deployment"
     assert settings.azure_openai_api_version == "2025-04-01-preview"
+
+
+def test_require_inspection_database_url_returns_configured_url() -> None:
+    settings = Settings(inspection_database_url="postgresql://inspection-db")
+
+    assert require_inspection_database_url(settings) == "postgresql://inspection-db"

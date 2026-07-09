@@ -22,6 +22,7 @@ def _settings(**overrides: Any) -> SimpleNamespace:
         "job_description_extraction_model": "config-model",
         "job_description_extraction_provider": "default",
         "company_enrichment_model": "company-config-model",
+        "inspection_database_url": "postgres://inspection-db",
         "azure_openai_endpoint": None,
         "azure_openai_api_key": None,
         "azure_openai_deployment_name": None,
@@ -508,6 +509,83 @@ def test_export_inspection_writes_artifact(monkeypatch) -> None:
     assert calls == ["2026-07-02"]
     assert "Inspection artifact complete: 2 company record(s), 3 job record(s)." in result.output
     assert "data/processed/inspection_companies_2026-07-02.jsonl" in result.output
+
+
+def test_sync_inspection_db_parses_date_and_uses_database_url(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_sync(collection_date: str, *, database_url: str) -> SimpleNamespace:
+        calls.append({"collection_date": collection_date, "database_url": database_url})
+        return SimpleNamespace(
+            collection_date=collection_date,
+            snapshot_count=2,
+            job_count=3,
+            database_url_configured=True,
+        )
+
+    monkeypatch.setattr(
+        cli,
+        "require_inspection_database_url",
+        lambda: "postgres://inspection-db",
+    )
+    monkeypatch.setattr(cli, "sync_inspection_database", fake_sync)
+
+    result = runner.invoke(
+        cli.app,
+        ["sync-inspection-db", "--date", "2026-07-02"],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [
+        {"collection_date": "2026-07-02", "database_url": "postgres://inspection-db"}
+    ]
+    assert "Inspection DB sync complete: 2 company snapshot(s), 3 compact job(s)." in result.output
+    assert "Database: configured" in result.output
+
+
+def test_sync_inspection_db_exits_when_database_url_missing(monkeypatch) -> None:
+    def missing_url() -> None:
+        raise RuntimeError("AI_HIRING_RADAR_DATABASE_URL is required")
+
+    monkeypatch.setattr(cli, "require_inspection_database_url", missing_url)
+
+    result = runner.invoke(
+        cli.app,
+        ["sync-inspection-db", "--date", "2026-07-02"],
+    )
+
+    assert result.exit_code == 1
+    assert "AI_HIRING_RADAR_DATABASE_URL is required" in result.output
+
+
+def test_sync_inspection_db_reports_sync_failures(monkeypatch) -> None:
+    def fail_sync(collection_date: str, *, database_url: str) -> None:
+        raise RuntimeError("relation does not exist")
+
+    monkeypatch.setattr(
+        cli,
+        "require_inspection_database_url",
+        lambda: "postgres://inspection-db",
+    )
+    monkeypatch.setattr(cli, "sync_inspection_database", fail_sync)
+
+    result = runner.invoke(
+        cli.app,
+        ["sync-inspection-db", "--date", "2026-07-02"],
+    )
+
+    assert result.exit_code == 1
+    assert "Inspection DB sync failed: relation does not exist" in result.output
+
+
+def test_sync_inspection_db_rejects_invalid_date() -> None:
+    result = runner.invoke(
+        cli.app,
+        ["sync-inspection-db", "--date", "not-a-date"],
+    )
+
+    assert result.exit_code != 0
+    assert "Date must use YYYY-MM-DD format" in result.output
 
 
 def test_inspect_rejects_invalid_date() -> None:

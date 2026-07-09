@@ -32,6 +32,10 @@ class Settings(BaseSettings):
         default=DEFAULT_COMPANY_ENRICHMENT_MODEL,
         validation_alias="COMPANY_ENRICHMENT_MODEL",
     )
+    inspection_database_url: str | None = Field(
+        default=None,
+        validation_alias="AI_HIRING_RADAR_DATABASE_URL",
+    )
     azure_openai_endpoint: str | None = Field(
         default=None,
         validation_alias="AZURE_OPENAI_ENDPOINT",
@@ -109,6 +113,19 @@ def require_serper_api_key(settings: Settings | None = None) -> str:
         )
 
     return api_key
+
+
+def require_inspection_database_url(settings: Settings | None = None) -> str:
+    loaded_settings = settings or load_settings()
+    database_url = (loaded_settings.inspection_database_url or "").strip()
+
+    if not database_url:
+        raise RuntimeError(
+            "AI_HIRING_RADAR_DATABASE_URL is required for inspection database commands. "
+            "Set it in the environment or in a local .env file."
+        )
+
+    return database_url
 
 
 def load_countries_config(path: Path | None = None) -> CountriesConfig:

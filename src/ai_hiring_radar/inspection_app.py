@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from html import escape
 import re
 import os
@@ -15,6 +15,10 @@ from dotenv import load_dotenv
 from st_aggrid import AgGrid, DataReturnMode, GridOptionsBuilder
 
 from ai_hiring_radar.inspection import CompanyInspectionDataset, load_company_inspection_data
+from ai_hiring_radar.inspection_db import (
+    list_synced_collection_dates,
+    load_company_inspection_data_from_database,
+)
 from ai_hiring_radar.review_state import (
     FIT_STATUS_OPTIONS,
     OUTREACH_STATUS_OPTIONS,
@@ -27,8 +31,8 @@ from ai_hiring_radar.storage_json import DEFAULT_DATA_DIR, processed_dir
 
 
 PARETO_LOGO_URL = "https://www.pareto.si/wp-content/uploads/2023/03/logo_90.png"
-REVIEW_STATE_DATABASE_URL_ENV = "AI_HIRING_RADAR_REVIEW_STATE_DATABASE_URL"
-REVIEW_STATE_CONNECTION_SECRET = "supabase_review_state"
+INSPECTION_DATABASE_URL_ENV = "AI_HIRING_RADAR_DATABASE_URL"
+INSPECTION_CONNECTION_SECRET = "supabase_inspection"
 WORKFLOW_VIEW_OPTIONS = ("Inspect", "Shortlist", "Outreach", "Rejected")
 EDITABLE_REVIEW_TABLE_COLUMNS = ("Fit Status", "Outreach Status")
 HIDDEN_GRID_COLUMNS = ("Grid Row Key", "Company Key", "Review Notes")
@@ -102,7 +106,7 @@ class ReviewStateBackendStatus:
     @property
     def read_only_reason(self) -> str:
         if not self.database_url:
-            return "review-state database URL is not configured"
+            return "database URL is not configured"
         if self.error:
             return self.error
         return "review-state persistence is unavailable"
@@ -176,33 +180,106 @@ def main() -> None:
     )
 
 
-@st.cache_data(show_spinner="Loading processed inspection data")
 def _load_dataset(collection_date: str) -> CompanyInspectionDataset:
+    return _load_dataset_from_sources(
+        collection_date,
+        inspection_database_url=_inspection_database_url(),
+    )
+
+
+def _load_dataset_from_sources(
+    collection_date: str,
+    *,
+    inspection_database_url: str | None,
+) -> CompanyInspectionDataset:
+    if inspection_database_url:
+        try:
+            dataset = _load_dataset_from_database(
+                collection_date,
+                inspection_database_url,
+            )
+        except Exception as exc:  # pragma: no cover - exact driver errors vary.
+            try:
+                fallback = _load_dataset_from_jsonl(collection_date)
+            except FileNotFoundError as fallback_exc:
+                raise FileNotFoundError(
+                    "Inspection database is unavailable and JSONL fallback failed. "
+                    f"Database reason: {exc}. JSONL reason: {fallback_exc}"
+                ) from fallback_exc
+            return replace(
+                fallback,
+                data_source="jsonl",
+                fallback_warning=(
+                    "Inspection database is unavailable; loaded JSONL fallback. "
+                    f"Reason: {exc}"
+                ),
+            )
+        if dataset is not None:
+            return dataset
+        try:
+            fallback = _load_dataset_from_jsonl(collection_date)
+        except FileNotFoundError as fallback_exc:
+            raise FileNotFoundError(
+                "Inspection database has no snapshots for this date and JSONL fallback "
+                f"failed. JSONL reason: {fallback_exc}"
+            ) from fallback_exc
+        return replace(
+            fallback,
+            data_source="jsonl",
+            fallback_warning=(
+                "Inspection database has no snapshots for this date; loaded JSONL fallback."
+            ),
+        )
+
+    return replace(_load_dataset_from_jsonl(collection_date), data_source="jsonl")
+
+
+@st.cache_data(show_spinner="Loading inspection database snapshots", ttl=60)
+def _load_dataset_from_database(
+    collection_date: str,
+    database_url: str,
+) -> CompanyInspectionDataset | None:
+    return load_company_inspection_data_from_database(
+        collection_date,
+        database_url=database_url,
+    )
+
+
+@st.cache_data(show_spinner="Loading processed inspection data")
+def _load_dataset_from_jsonl(collection_date: str) -> CompanyInspectionDataset:
     return load_company_inspection_data(collection_date)
 
 
-def _review_state_database_url() -> str | None:
-    secret_url = _review_state_database_url_from_secrets()
+def _inspection_database_url() -> str | None:
+    secret_url = _inspection_database_url_from_secrets()
     if secret_url:
         return secret_url
     _load_local_env()
-    env_url = os.environ.get(REVIEW_STATE_DATABASE_URL_ENV, "").strip()
+    env_url = os.environ.get(INSPECTION_DATABASE_URL_ENV, "").strip()
     return env_url or None
+
+
+def _review_state_database_url() -> str | None:
+    return _inspection_database_url()
 
 
 def _load_local_env(dotenv_path: Path | None = None) -> None:
     load_dotenv(dotenv_path=dotenv_path, override=False)
 
 
-def _review_state_database_url_from_secrets() -> str | None:
+def _inspection_database_url_from_secrets() -> str | None:
     try:
         secrets = st.secrets
         connections = _mapping_get(secrets, "connections")
-        connection = _mapping_get(connections, REVIEW_STATE_CONNECTION_SECRET)
+        connection = _mapping_get(connections, INSPECTION_CONNECTION_SECRET)
         url = _mapping_get(connection, "url")
     except Exception:
         return None
     return url.strip() if isinstance(url, str) and url.strip() else None
+
+
+def _review_state_database_url_from_secrets() -> str | None:
+    return _inspection_database_url_from_secrets()
 
 
 def _mapping_get(value: object | None, key: str) -> object | None:
@@ -648,21 +725,30 @@ def _collection_date(argv: list[str] | None = None) -> str | None:
     if env_date:
         return env_date
 
-    return _latest_collection_date()
+    return _latest_collection_date(database_url=_inspection_database_url())
 
 
-def _latest_collection_date(*, data_dir: Path = DEFAULT_DATA_DIR) -> str | None:
+def _latest_collection_date(
+    *,
+    data_dir: Path = DEFAULT_DATA_DIR,
+    database_url: str | None = None,
+) -> str | None:
     root = processed_dir(data_dir=data_dir)
-    if not root.exists():
-        return None
-
     dates: list[str] = []
-    for path in root.glob("*.jsonl"):
-        for pattern in (COMPANIES_FILENAME_PATTERN, INSPECTION_ARTIFACT_FILENAME_PATTERN):
-            match = pattern.fullmatch(path.name)
-            if match is not None:
-                dates.append(match.group(1))
-    return max(dates) if dates else None
+    if not root.exists():
+        dates = []
+    else:
+        for path in root.glob("*.jsonl"):
+            for pattern in (COMPANIES_FILENAME_PATTERN, INSPECTION_ARTIFACT_FILENAME_PATTERN):
+                match = pattern.fullmatch(path.name)
+                if match is not None:
+                    dates.append(match.group(1))
+    if database_url:
+        try:
+            dates.extend(list_synced_collection_dates(database_url=database_url))
+        except Exception:
+            pass
+    return max(set(dates)) if dates else None
 
 
 def _sidebar_filters(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -670,107 +756,103 @@ def _sidebar_filters(records: list[dict[str, Any]]) -> dict[str, Any]:
     if st.sidebar.button("Clear filters"):
         _clear_filter_state()
 
-    with st.sidebar.form("inspection_filters"):
-        filters = {
-            "workplace_modes": st.multiselect(
-                "Workplace mode",
-                [*WORKPLACE_MODE_OPTIONS, MISSING_FILTER_OPTION],
-                key="filter_workplace_modes",
-            ),
-            "ai_team_contexts": st.multiselect(
-                "AI team context",
-                [*AI_TEAM_CONTEXT_OPTIONS, MISSING_FILTER_OPTION],
-                key="filter_ai_team_contexts",
-            ),
-            "delivery_contexts": st.multiselect(
-                "Delivery context",
-                [*DELIVERY_CONTEXT_OPTIONS, MISSING_FILTER_OPTION],
-                key="filter_delivery_contexts",
-            ),
-            "company_types": st.multiselect(
-                "Company type",
-                [*COMPANY_TYPE_OPTIONS, MISSING_FILTER_OPTION],
-                key="filter_company_types",
-            ),
-            "company_sizes": st.multiselect(
-                "Company size",
-                _company_size_options(records, include_missing=True),
-                key="filter_company_sizes",
-            ),
-            "min_jobs": st.number_input(
-                "Min job posts",
-                min_value=0,
-                value=None,
-                step=1,
-                placeholder="Any",
-                key="filter_min_jobs",
-            ),
-            "max_jobs": st.number_input(
-                "Max job posts",
-                min_value=0,
-                value=None,
-                step=1,
-                placeholder="Any",
-                key="filter_max_jobs",
-                help="Use 9 for fewer than 10 job posts.",
-            ),
-            "countries": st.multiselect(
-                "Country",
-                _list_options(records, "countries", include_missing=True),
-                key="filter_countries",
-            ),
-            "role_classifications": st.multiselect(
-                "Role classification",
-                _options(records, "role_classification", include_missing=True),
-                key="filter_role_classifications",
-            ),
-            "sources": st.multiselect(
-                "Source/platform",
-                _source_options(records, include_missing=True),
-                key="filter_sources",
-            ),
-            "ai_tech_forward_signals": st.multiselect(
-                "AI tech-forward signal",
-                _options(records, "ai_tech_forward_signal", include_missing=True),
-                key="filter_ai_tech_forward_signals",
-            ),
-            "fit_statuses": st.multiselect(
-                "Fit status",
-                list(FIT_STATUS_OPTIONS),
-                key="filter_fit_statuses",
-            ),
-            "outreach_statuses": st.multiselect(
-                "Outreach status",
-                list(OUTREACH_STATUS_OPTIONS),
-                key="filter_outreach_statuses",
-            ),
-            "needs_action": st.selectbox(
-                "Needs action",
-                BOOLEAN_FILTER_OPTIONS,
-                key="filter_needs_action",
-                help=(
-                    "Suitable companies with outreach not started or follow-up needed."
-                ),
-            ),
-            "has_contacts": st.selectbox(
-                "Has contacts", BOOLEAN_FILTER_OPTIONS, key="filter_has_contacts"
-            ),
-            "has_job_description_extracts": st.selectbox(
-                "Has job-description extracts",
-                BOOLEAN_FILTER_OPTIONS,
-                key="filter_has_job_description_extracts",
-            ),
-            "has_company_enrichment": st.selectbox(
-                "Has company enrichment",
-                BOOLEAN_FILTER_OPTIONS,
-                key="filter_has_company_enrichment",
-            ),
-            "search": st.text_input(
-                "Search company, titles, industry, description",
-                key="filter_search",
-            ).strip(),
-        }
-        st.form_submit_button("Apply filters")
+    filters = {
+        "workplace_modes": st.sidebar.multiselect(
+            "Workplace mode",
+            [*WORKPLACE_MODE_OPTIONS, MISSING_FILTER_OPTION],
+            key="filter_workplace_modes",
+        ),
+        "ai_team_contexts": st.sidebar.multiselect(
+            "AI team context",
+            [*AI_TEAM_CONTEXT_OPTIONS, MISSING_FILTER_OPTION],
+            key="filter_ai_team_contexts",
+        ),
+        "delivery_contexts": st.sidebar.multiselect(
+            "Delivery context",
+            [*DELIVERY_CONTEXT_OPTIONS, MISSING_FILTER_OPTION],
+            key="filter_delivery_contexts",
+        ),
+        "company_types": st.sidebar.multiselect(
+            "Company type",
+            [*COMPANY_TYPE_OPTIONS, MISSING_FILTER_OPTION],
+            key="filter_company_types",
+        ),
+        "company_sizes": st.sidebar.multiselect(
+            "Company size",
+            _company_size_options(records, include_missing=True),
+            key="filter_company_sizes",
+        ),
+        "min_jobs": st.sidebar.number_input(
+            "Min job posts",
+            min_value=0,
+            value=None,
+            step=1,
+            placeholder="Any",
+            key="filter_min_jobs",
+        ),
+        "max_jobs": st.sidebar.number_input(
+            "Max job posts",
+            min_value=0,
+            value=None,
+            step=1,
+            placeholder="Any",
+            key="filter_max_jobs",
+            help="Use 9 for fewer than 10 job posts.",
+        ),
+        "countries": st.sidebar.multiselect(
+            "Country",
+            _list_options(records, "countries", include_missing=True),
+            key="filter_countries",
+        ),
+        "role_classifications": st.sidebar.multiselect(
+            "Role classification",
+            _options(records, "role_classification", include_missing=True),
+            key="filter_role_classifications",
+        ),
+        "sources": st.sidebar.multiselect(
+            "Source/platform",
+            _source_options(records, include_missing=True),
+            key="filter_sources",
+        ),
+        "ai_tech_forward_signals": st.sidebar.multiselect(
+            "AI tech-forward signal",
+            _options(records, "ai_tech_forward_signal", include_missing=True),
+            key="filter_ai_tech_forward_signals",
+        ),
+        "fit_statuses": st.sidebar.multiselect(
+            "Fit status",
+            list(FIT_STATUS_OPTIONS),
+            key="filter_fit_statuses",
+        ),
+        "outreach_statuses": st.sidebar.multiselect(
+            "Outreach status",
+            list(OUTREACH_STATUS_OPTIONS),
+            key="filter_outreach_statuses",
+        ),
+        "needs_action": st.sidebar.selectbox(
+            "Needs action",
+            BOOLEAN_FILTER_OPTIONS,
+            key="filter_needs_action",
+            help="Suitable companies with outreach not started or follow-up needed.",
+        ),
+        "has_contacts": st.sidebar.selectbox(
+            "Has contacts", BOOLEAN_FILTER_OPTIONS, key="filter_has_contacts"
+        ),
+        "has_job_description_extracts": st.sidebar.selectbox(
+            "Has job-description extracts",
+            BOOLEAN_FILTER_OPTIONS,
+            key="filter_has_job_description_extracts",
+        ),
+        "has_company_enrichment": st.sidebar.selectbox(
+            "Has company enrichment",
+            BOOLEAN_FILTER_OPTIONS,
+            key="filter_has_company_enrichment",
+        ),
+        "search": st.sidebar.text_input(
+            "Search company, titles, industry, description",
+            key="filter_search",
+        ).strip(),
+    }
     return filters
 
 
@@ -853,6 +935,7 @@ def _render_summary(
     default_review_count = sum(1 for record in records if not record.get("has_review_state"))
 
     st.caption(f"Collection date: {dataset.collection_date}")
+    _render_inspection_data_source_status(dataset)
     metrics = [
         ("Companies", counts.companies_loaded),
         ("Filtered", filtered_company_count),
@@ -879,6 +962,16 @@ def _render_summary(
         with st.expander("Skipped malformed rows", expanded=False):
             st.json(skipped)
     _render_review_state_status(review_state_status, records)
+
+
+def _render_inspection_data_source_status(dataset: CompanyInspectionDataset) -> None:
+    source = dataset.data_source or "jsonl"
+    if source == "database" and dataset.synced_at:
+        st.caption(f"Data source: database, synced at {dataset.synced_at}.")
+    else:
+        st.caption(f"Data source: {source}.")
+    if dataset.fallback_warning:
+        st.warning(dataset.fallback_warning)
 
 
 def _render_review_state_status(

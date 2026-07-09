@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from ai_hiring_radar import inspection_app
+from ai_hiring_radar.inspection import (
+    CompanyInspectionDataset,
+    InspectionInputPaths,
+    InspectionLoadCounts,
+)
 from ai_hiring_radar.storage_json import write_processed_jsonl
 
 
@@ -72,6 +78,32 @@ def _record(**overrides):  # noqa: ANN001, ANN202 - compact test fixture helper.
     return record
 
 
+def _dataset(**overrides):  # noqa: ANN001, ANN202 - compact test fixture helper.
+    dataset = {
+        "collection_date": "2026-07-02",
+        "records": [_record()],
+        "paths": InspectionInputPaths(
+            companies_path=Path("data/processed/companies_2026-07-02.jsonl"),
+            candidates_path=Path("data/processed/job_candidates_2026-07-02.jsonl"),
+            job_description_extracts_path=Path(
+                "data/processed/job_description_extracts_2026-07-02.jsonl"
+            ),
+            company_enrichment_extracts_path=Path(
+                "data/processed/company_enrichment_extracts_2026-07-02.jsonl"
+            ),
+        ),
+        "missing_optional_files": [],
+        "counts": InspectionLoadCounts(
+            companies_loaded=1,
+            candidates_loaded=1,
+            job_description_extracts_loaded=1,
+            company_enrichments_loaded=1,
+        ),
+    }
+    dataset.update(overrides)
+    return CompanyInspectionDataset(**dataset)
+
+
 def test_collection_date_reads_script_argument() -> None:
     assert inspection_app._collection_date(["inspection_app.py", "--date", "2026-07-02"]) == (
         "2026-07-02"
@@ -100,35 +132,137 @@ def test_load_local_env_reads_env_file_without_overriding_existing_env(
 ) -> None:
     env_path = tmp_path / ".env"
     env_path.write_text(
-        "AI_HIRING_RADAR_REVIEW_STATE_DATABASE_URL=postgres://from-file\n"
+        "AI_HIRING_RADAR_DATABASE_URL=postgres://from-file\n"
         "EXISTING_VALUE=from-file\n",
         encoding="utf-8",
     )
-    monkeypatch.delenv("AI_HIRING_RADAR_REVIEW_STATE_DATABASE_URL", raising=False)
+    monkeypatch.delenv("AI_HIRING_RADAR_DATABASE_URL", raising=False)
     monkeypatch.setenv("EXISTING_VALUE", "from-env")
 
     inspection_app._load_local_env(env_path)
 
-    assert (
-        inspection_app.os.environ["AI_HIRING_RADAR_REVIEW_STATE_DATABASE_URL"]
-        == "postgres://from-file"
-    )
+    assert inspection_app.os.environ["AI_HIRING_RADAR_DATABASE_URL"] == "postgres://from-file"
     assert inspection_app.os.environ["EXISTING_VALUE"] == "from-env"
 
 
-def test_review_state_database_url_loads_local_env_before_env_fallback(monkeypatch) -> None:
-    monkeypatch.delenv("AI_HIRING_RADAR_REVIEW_STATE_DATABASE_URL", raising=False)
-    monkeypatch.setattr(inspection_app, "_review_state_database_url_from_secrets", lambda: None)
+def test_inspection_database_url_loads_local_env_before_env_fallback(monkeypatch) -> None:
+    monkeypatch.delenv("AI_HIRING_RADAR_DATABASE_URL", raising=False)
+    monkeypatch.setattr(inspection_app, "_inspection_database_url_from_secrets", lambda: None)
 
     def fake_load_local_env() -> None:
-        monkeypatch.setenv(
-            "AI_HIRING_RADAR_REVIEW_STATE_DATABASE_URL",
-            "postgres://from-local-env",
-        )
+        monkeypatch.setenv("AI_HIRING_RADAR_DATABASE_URL", "postgres://from-local-env")
 
     monkeypatch.setattr(inspection_app, "_load_local_env", fake_load_local_env)
 
+    assert inspection_app._inspection_database_url() == "postgres://from-local-env"
     assert inspection_app._review_state_database_url() == "postgres://from-local-env"
+
+
+def test_load_dataset_from_sources_uses_database_when_configured(monkeypatch) -> None:
+    database_dataset = _dataset(data_source="database", synced_at="2026-07-02T10:30:00Z")
+
+    monkeypatch.setattr(
+        inspection_app,
+        "_load_dataset_from_database",
+        lambda collection_date, database_url: database_dataset,
+    )
+    monkeypatch.setattr(
+        inspection_app,
+        "_load_dataset_from_jsonl",
+        lambda collection_date: (_ for _ in ()).throw(AssertionError("JSONL fallback used")),
+    )
+
+    dataset = inspection_app._load_dataset_from_sources(
+        "2026-07-02",
+        inspection_database_url="postgres://test",
+    )
+
+    assert dataset is database_dataset
+    assert dataset.data_source == "database"
+
+
+def test_load_dataset_from_sources_falls_back_when_database_unsynced(monkeypatch) -> None:
+    monkeypatch.setattr(
+        inspection_app,
+        "_load_dataset_from_database",
+        lambda collection_date, database_url: None,
+    )
+    monkeypatch.setattr(
+        inspection_app,
+        "_load_dataset_from_jsonl",
+        lambda collection_date: _dataset(data_source="jsonl"),
+    )
+
+    dataset = inspection_app._load_dataset_from_sources(
+        "2026-07-02",
+        inspection_database_url="postgres://test",
+    )
+
+    assert dataset.data_source == "jsonl"
+    assert "no snapshots" in str(dataset.fallback_warning)
+
+
+def test_load_dataset_from_sources_falls_back_when_database_raises(monkeypatch) -> None:
+    def fail_database(collection_date: str, database_url: str) -> None:
+        raise RuntimeError("connection failed")
+
+    monkeypatch.setattr(inspection_app, "_load_dataset_from_database", fail_database)
+    monkeypatch.setattr(
+        inspection_app,
+        "_load_dataset_from_jsonl",
+        lambda collection_date: _dataset(data_source="jsonl"),
+    )
+
+    dataset = inspection_app._load_dataset_from_sources(
+        "2026-07-02",
+        inspection_database_url="postgres://test",
+    )
+
+    assert dataset.data_source == "jsonl"
+    assert "connection failed" in str(dataset.fallback_warning)
+
+
+def test_load_dataset_from_sources_preserves_database_error_when_jsonl_missing(
+    monkeypatch,
+) -> None:
+    def fail_database(collection_date: str, database_url: str) -> None:
+        raise RuntimeError("connection failed")
+
+    def fail_jsonl(collection_date: str) -> None:
+        raise FileNotFoundError("missing companies file")
+
+    monkeypatch.setattr(inspection_app, "_load_dataset_from_database", fail_database)
+    monkeypatch.setattr(inspection_app, "_load_dataset_from_jsonl", fail_jsonl)
+
+    try:
+        inspection_app._load_dataset_from_sources(
+            "2026-07-02",
+            inspection_database_url="postgres://test",
+        )
+    except FileNotFoundError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("expected FileNotFoundError")
+
+    assert "connection failed" in message
+    assert "missing companies file" in message
+
+
+def test_latest_collection_date_includes_database_dates(tmp_path, monkeypatch) -> None:
+    write_processed_jsonl("companies_2026-07-01.jsonl", [_record()], data_dir=tmp_path)
+    monkeypatch.setattr(
+        inspection_app,
+        "list_synced_collection_dates",
+        lambda *, database_url: ["2026-07-03"],
+    )
+
+    assert (
+        inspection_app._latest_collection_date(
+            data_dir=tmp_path,
+            database_url="postgres://test",
+        )
+        == "2026-07-03"
+    )
 
 
 def test_apply_filters_matches_required_optional_and_search_filters() -> None:

@@ -19,10 +19,12 @@ from ai_hiring_radar.config import (
     load_countries_config,
     load_settings,
     load_taxonomy_config,
+    require_inspection_database_url,
     require_serper_api_key,
 )
 from ai_hiring_radar.export import export_company_review_files
 from ai_hiring_radar.inspection import export_company_inspection_artifact
+from ai_hiring_radar.inspection_db import sync_inspection_database
 from ai_hiring_radar.job_description_extraction import (
     PydanticAIJobDescriptionExtractor,
     run_job_description_extraction,
@@ -2896,6 +2898,47 @@ def export_inspection_command(
         f"{result.job_count} job record(s)."
     )
     console.print(f"Artifact: {result.path.as_posix()}")
+
+
+@app.command("sync-inspection-db")
+def sync_inspection_db_command(
+    date_value: Annotated[
+        str,
+        typer.Option("--date", help="Collection date in YYYY-MM-DD format."),
+    ],
+) -> None:
+    """Sync compact company inspection snapshots into Postgres."""
+    collection_date = _parse_iso_date(date_value)
+    try:
+        database_url = require_inspection_database_url()
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    try:
+        result = sync_inspection_database(
+            collection_date,
+            database_url=database_url,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:
+        console.print(f"[red]Inspection DB sync failed: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    console.print(
+        "Inspection DB sync complete: "
+        f"{result.snapshot_count} company snapshot(s), "
+        f"{result.job_count} compact job(s)."
+    )
+    console.print(f"Collection date: {result.collection_date}")
+    console.print("Source: data/processed")
+    console.print(
+        "Database: configured"
+        if result.database_url_configured
+        else "Database: not configured"
+    )
 
 
 @app.command("inspect")
