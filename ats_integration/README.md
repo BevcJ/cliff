@@ -1,6 +1,6 @@
 # ATS Integration Notes
 
-This folder documents how to retrieve public job-board data for access-rank-1 ATS platforms when we already know the company identifier used by the provider.
+This folder documents how to retrieve public job-board data for ATS platforms when we already know the company identifier used by the provider.
 
 Access-rank-1 means the provider exposes a simple public structured source for jobs shown on its hosted careers site. These guides only cover public job data. Do not use private customer/admin APIs, copied cookies, or authenticated endpoints unless explicitly authorized.
 
@@ -15,6 +15,13 @@ Access-rank-1 means the provider exposes a simple public structured source for j
 | Recruitee | [recruitee.md](recruitee.md) | Recruitee subdomain | Public offers API |
 | Personio | [personio.md](personio.md) | Personio subdomain | Public XML feed |
 | Teamtailor | [teamtailor.md](teamtailor.md) | Teamtailor subdomain | Public RSS feed |
+
+## Rank-2 And Candidate Guides
+
+| Platform | Guide | Primary Input | Primary Data Source | Status |
+|---|---|---|---|---|
+| Workable | [workable.md](workable.md) | Workable account slug | Public hosted careers JSON endpoints | Verified, connector-ready |
+| BambooHR | [bamboohr.md](bamboohr.md) | BambooHR subdomain | Candidate public careers endpoint | Needs tenant validation |
 
 ## Common Retrieval Flow
 

@@ -63,6 +63,18 @@ career-board data. Do not use private/admin APIs, copied browser cookies,
 authentication bypass, CAPTCHA bypass, LinkedIn scraping, Indeed scraping, or
 non-public data.
 
+## Detail Fetch Prefilter Rule
+
+For providers that expose a listing endpoint plus per-job detail endpoints, use
+the listing response to decide whether a detail fetch is justified. A job title
+must pass the title-only AI filter before any per-job detail request. Do not
+fetch detail data for jobs that fail title classification or are marked
+non-public, inactive, internal, or hidden by provider visibility fields.
+
+Preserve the full raw listing response before transformation. Limit only the
+additional per-job detail responses to candidate jobs to reduce request volume
+and avoid collecting unnecessary non-target descriptions.
+
 ## Planning Checklist
 
 The plan presented to the user should cover:
@@ -70,7 +82,7 @@ The plan presented to the user should cover:
 - Provider priority and access rank.
 - Discovery query patterns.
 - URL parsing and provider company identifier.
-- Public listing/detail endpoint, feed, or fallback strategy.
+- Public listing/detail endpoint, feed, fallback strategy, and detail prefiltering.
 - Request headers, params, pagination, region/language handling, and rate limits.
 - Raw response storage path and wrapper fields.
 - Job normalization into the existing `job_candidate` schema.
@@ -119,12 +131,15 @@ Provider source files usually include, in this order:
 9. `collect_{provider}_boards()` writing raw files and `manifest.json`.
 
 Normalization usually adds provider-specific helpers for postings, title, job ID,
-source URL, team/department, location, description, and country inputs. It should
-filter to title-level AI signals, infer country from provider job-location data,
-use stable IDs from provider identity, and return existing `job_candidate` fields.
+source URL, team/department, location, description, visibility, and country inputs.
+It should filter to title-level AI signals, skip inactive/internal/hidden jobs,
+exclude hidden locations from normalized location fields, infer country from
+provider job-location data, use stable IDs from provider identity, and return
+existing `job_candidate` fields.
 
 Tests should cover URL parsing, discovery extraction, client request shape, raw
-wrapper and manifest writing, title-only AI filtering, country inference, and
+wrapper and manifest writing, detail prefiltering for non-candidate titles,
+title-only AI filtering, visibility filtering, country inference, and
 `process_collection()` inclusion.
 
 ## Implementation Rules
