@@ -6,6 +6,7 @@ import sys
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from typer.testing import CliRunner
 
 from ai_hiring_radar import cli
@@ -669,3 +670,23 @@ def test_collect_teamtailor_board_url_dry_run_prints_normalized_board() -> None:
     assert result.exit_code == 0
     assert "Normalized 1 Teamtailor board URL(s)." in result.output
     assert "https://acme.teamtailor.com" in result.output
+
+
+@pytest.mark.skip(reason="TDD stub - not yet implemented")
+def test_collect_boards_file_skips_discovery() -> None:
+    """(07-ats-collection-resilience, US-1)
+
+    A collect command invoked with a discovery boards.jsonl file should load board
+    URLs from that file, skip Serper discovery, and not require a Serper API key.
+    """
+    raise NotImplementedError("TDD stub - boards-file collection-only mode")
+
+
+@pytest.mark.skip(reason="TDD stub - not yet implemented")
+def test_collect_boards_file_supports_plain_text() -> None:
+    """(07-ats-collection-resilience, US-3)
+
+    A collect command invoked with a plain text boards file should treat each
+    non-empty line as a board URL or slug and normalize those inputs.
+    """
+    raise NotImplementedError("TDD stub - plain text boards-file input")

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from ai_hiring_radar.config import load_countries_config
-from ai_hiring_radar.query_builder import LocationDepth
+from ai_hiring_radar.search_locations import LocationDepth
 from ai_hiring_radar.sources.ats_discovery import (
     AtsDiscoveryDepth,
     AtsDiscoveryProvider,

@@ -2,51 +2,30 @@ from datetime import date
 
 from ai_hiring_radar.storage_json import (
     read_json,
-    stable_search_filename,
+    stable_board_filename,
     write_processed_jsonl,
-    write_raw_search_response,
+    write_raw_ats_response,
 )
 
 
-def test_stable_search_filename() -> None:
-    assert (
-        stable_search_filename(
-            country_code="nl",
-            role_term="AI Product Manager",
-            search_location="Netherlands",
-        )
-        == "nl_ai-product-manager_netherlands.json"
-    )
-
-    assert (
-        stable_search_filename(
-            country_code="nl",
-            role_term="AI Product Manager",
-            search_location="Amsterdam",
-        )
-        == "nl_ai-product-manager_amsterdam.json"
-    )
+def test_stable_board_filename() -> None:
+    assert stable_board_filename(platform_company_slug="Acme AI") == "acme-ai.json"
+    assert stable_board_filename(platform_company_slug="") == "unknown.json"
 
 
-def test_raw_json_can_be_written_and_read_back(tmp_path) -> None:
-    path = write_raw_search_response(
-        {"organic_results": [{"title": "AI Product Manager"}]},
-        country_code="nl",
-        role_term="AI Product Manager",
-        search_location="Netherlands",
+def test_raw_ats_json_can_be_written_and_read_back(tmp_path) -> None:
+    path = write_raw_ats_response(
+        {"record_type": "raw_ats_response", "response": {"jobs": []}},
+        platform_company_slug="acme-ai",
         collection_date=date(2026, 6, 13),
         data_dir=tmp_path,
+        platform="greenhouse",
     )
 
     assert path == (
-        tmp_path
-        / "raw"
-        / "searches"
-        / "2026-06-13"
-        / "serper_google"
-        / "nl_ai-product-manager_netherlands.json"
+        tmp_path / "raw" / "ats" / "2026-06-13" / "greenhouse" / "acme-ai.json"
     )
-    assert read_json(path) == {"organic_results": [{"title": "AI Product Manager"}]}
+    assert read_json(path) == {"record_type": "raw_ats_response", "response": {"jobs": []}}
 
 
 def test_processed_jsonl_is_written_under_processed_dir(tmp_path) -> None:

@@ -15,12 +15,6 @@ Set `SERPER_API_KEY` in `.env` before running collection-related commands. For j
 
 ```bash
 uv run ai-hiring-radar --help
-uv run ai-hiring-radar collect --countries nl,uk,dk
-uv run ai-hiring-radar collect --countries nl,uk,dk --dry-run
-uv run ai-hiring-radar collect --countries nl --role "AI Product Manager"
-uv run ai-hiring-radar collect --countries nl,uk,dk --limit 10
-uv run ai-hiring-radar collect --countries nl --location-depth cities --dry-run
-uv run ai-hiring-radar collect --countries nl --location-depth cities --limit 20
 uv run ai-hiring-radar discover-ashby --countries nl --dry-run
 uv run ai-hiring-radar collect-ashby --countries nl
 uv run ai-hiring-radar collect-ashby --countries nl --pages 3 --results-per-query 10
@@ -56,14 +50,13 @@ uv run ai-hiring-radar enrich-companies --date YYYY-MM-DD --no-progress
 uv run ai-hiring-radar export --date YYYY-MM-DD
 uv run ai-hiring-radar sync-inspection-db --date YYYY-MM-DD
 uv run ai-hiring-radar inspect --date YYYY-MM-DD
-uv run ai-hiring-radar run --countries nl,uk,dk
 ```
 
-Collection uses Serper Google Search and stores raw, self-describing JSON wrappers under `data/raw/searches/YYYY-MM-DD/serper_google/`. It targets LinkedIn `/jobs/view` results, skips aggregate LinkedIn listing pages, and does not fetch LinkedIn pages directly.
+ATS discovery commands use Serper Google Search to find public provider boards. Provider collection commands store raw, self-describing JSON wrappers under `data/raw/ats/YYYY-MM-DD/<provider>/`.
 
-Use `--location-depth cities` for deeper Netherlands-only coverage across configured city/location variants. The default remains `--location-depth country`.
+Use `--location-depth cities` on ATS discovery and collection commands for deeper Netherlands-only coverage across configured city/location variants. Provider defaults use city-level discovery where supported.
 
-Processing reads those raw wrappers, writes deduplicated candidates to `data/processed/job_candidates_YYYY-MM-DD.jsonl`, aggregates parseable companies to `data/processed/companies_YYYY-MM-DD.jsonl`, and exports review files under `data/exports/`. ATS candidates may include provider-supplied job descriptions, but AI role filtering remains based on job titles.
+Processing reads raw ATS wrappers only, writes deduplicated candidates to `data/processed/job_candidates_YYYY-MM-DD.jsonl`, aggregates parseable companies to `data/processed/companies_YYYY-MM-DD.jsonl`, and exports review files under `data/exports/`. ATS candidates may include provider-supplied job descriptions, but AI role filtering remains based on job titles.
 
 Job description extraction is a separate step after `process`. It reads `data/processed/job_candidates_YYYY-MM-DD.jsonl`, calls a Pydantic AI structured-output extractor for candidates with useful ATS/job-description data, and writes compact records to `data/processed/job_description_extracts_YYYY-MM-DD.jsonl`. The extraction output includes model/prompt metadata and structured datapoints, but intentionally does not include full job description text, evidence snippets, raw LLM responses, or confidence scores. Progress is shown by default with `tqdm`; use `--no-progress` for quiet runs. Successful records are appended immediately, and reruns resume by skipping existing `job_id`s. Use `--countries nl,dk` to extract only jobs matching any selected country code before broadening to the full set later. Use `--restart` to clear existing extracts first. Use `--dry-run` to count processable candidates without model calls or output writes.
 
@@ -75,7 +68,7 @@ The included Azure AI Foundry configuration uses the Responses API endpoint `htt
 
 Company enrichment uses `COMPANY_ENRICHMENT_MODEL` directly as the Azure deployment name when `AZURE_OPENAI_ENDPOINT` is configured. The default is `gpt-5.4-mini`; if Azure rejects native web search for that deployment/API version, the command reports sampled model errors in the CLI summary and continues counting per-record failures.
 
-Ashby collection discovers public boards through exhaustive Serper query families such as `site:jobs.ashbyhq.com`, `site:jobs.ashbyhq.com "Netherlands"`, `site:jobs.ashbyhq.com "AI Engineer"`, `site:jobs.ashbyhq.com "LLM" "Netherlands"`, and `site:jobs.ashbyhq.com "AI Engineer" "Amsterdam"`. By default it uses configured city locations, broad AI terms, v1 role terms, 10 results per query, and 2 result pages. Use `--discovery-depth broad` or `--discovery-depth standard` to reduce query volume. It fetches each discovered board through Ashby's public hosted job-board endpoint, attempts per-job detail retrieval for full descriptions, and stores raw board responses under `data/raw/ats/YYYY-MM-DD/ashby/`. Detail retrieval failures are recorded per job and do not fail the whole board collection. Processing includes Ashby candidates alongside Serper candidates. Use `debug-ashby-discovery` to print a paste-friendly summary of discovery errors from the latest manifest.
+Ashby collection discovers public boards through exhaustive Serper query families such as `site:jobs.ashbyhq.com`, `site:jobs.ashbyhq.com "Netherlands"`, `site:jobs.ashbyhq.com "AI Engineer"`, `site:jobs.ashbyhq.com "LLM" "Netherlands"`, and `site:jobs.ashbyhq.com "AI Engineer" "Amsterdam"`. By default it uses configured city locations, broad AI terms, v1 role terms, 10 results per query, and 2 result pages. Use `--discovery-depth broad` or `--discovery-depth standard` to reduce query volume. It fetches each discovered board through Ashby's public hosted job-board endpoint, attempts per-job detail retrieval for full descriptions, and stores raw board responses under `data/raw/ats/YYYY-MM-DD/ashby/`. Detail retrieval failures are recorded per job and do not fail the whole board collection. Use `debug-ashby-discovery` to print a paste-friendly summary of discovery errors from the latest manifest.
 
 Lever collection uses the same discovery flow against `site:jobs.lever.co`, then fetches public postings from `https://api.lever.co/v0/postings/{site_slug}?mode=json` with an EU API fallback. Raw board responses are stored under `data/raw/ats/YYYY-MM-DD/lever/` and are included by `process` before dedupe and company aggregation.
 

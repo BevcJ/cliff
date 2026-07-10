@@ -16,7 +16,7 @@ from ai_hiring_radar.classify import (
 )
 from ai_hiring_radar.config import CountriesConfig
 from ai_hiring_radar.models import SourceMode, SourceName
-from ai_hiring_radar.query_builder import LocationDepth
+from ai_hiring_radar.search_locations import LocationDepth
 from ai_hiring_radar.sources.ats_discovery import (
     DEFAULT_ATS_DISCOVERY_PAGES,
     DEFAULT_ATS_DISCOVERY_RESULTS_PER_QUERY,

@@ -28,6 +28,5 @@ class SourceName(StrEnum):
 
 
 class SourceMode(StrEnum):
-    LINKEDIN_SAFE_SEARCH = "linkedin_safe_search"
     ATS_BOARD_DISCOVERY_SEARCH = "ats_board_discovery_search"
     PUBLIC_JOB_BOARD_ENDPOINT = "public_job_board_endpoint"

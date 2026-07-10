@@ -8,7 +8,6 @@ from typing import Any, Iterable
 
 
 DEFAULT_DATA_DIR = Path("data")
-DEFAULT_SOURCE_NAME = "serper_google"
 DEFAULT_ATS_PLATFORM = "ashby"
 
 
@@ -25,27 +24,8 @@ def slugify(value: str) -> str:
     return slug or "unknown"
 
 
-def stable_search_filename(
-    *, country_code: str, role_term: str, search_location: str
-) -> str:
-    return (
-        f"{slugify(country_code)}_"
-        f"{slugify(role_term)}_"
-        f"{slugify(search_location)}.json"
-    )
-
-
 def stable_board_filename(*, platform_company_slug: str) -> str:
     return f"{slugify(platform_company_slug)}.json"
-
-
-def raw_search_dir(
-    collection_date: date | str | None = None,
-    *,
-    data_dir: Path = DEFAULT_DATA_DIR,
-    source_name: str = DEFAULT_SOURCE_NAME,
-) -> Path:
-    return data_dir / "raw" / "searches" / format_date(collection_date) / source_name
 
 
 def raw_ats_dir(
@@ -90,23 +70,6 @@ def read_json(path: Path) -> Any:
 def read_jsonl(path: Path) -> list[Any]:
     with path.open("r", encoding="utf-8") as file:
         return [json.loads(line) for line in file if line.strip()]
-
-
-def write_raw_search_response(
-    response: dict[str, Any],
-    *,
-    country_code: str,
-    role_term: str,
-    search_location: str,
-    collection_date: date | str | None = None,
-    data_dir: Path = DEFAULT_DATA_DIR,
-) -> Path:
-    path = raw_search_dir(collection_date, data_dir=data_dir) / stable_search_filename(
-        country_code=country_code,
-        role_term=role_term,
-        search_location=search_location,
-    )
-    return write_json(path, response)
 
 
 def write_raw_ats_response(

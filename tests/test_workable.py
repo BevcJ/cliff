@@ -2,10 +2,12 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
 
 from ai_hiring_radar.config import load_countries_config
-from ai_hiring_radar.normalize import normalize_raw_ats_file, process_collection
-from ai_hiring_radar.query_builder import LocationDepth
+from ai_hiring_radar.normalizers.ats.registry import normalize_raw_ats_file
+from ai_hiring_radar.processing import process_collection
+from ai_hiring_radar.search_locations import LocationDepth
 from ai_hiring_radar.sources.ats_discovery import AtsDiscoveryDepth
 from ai_hiring_radar.sources.workable import (
     WorkableClient,
@@ -593,3 +595,24 @@ def test_build_workable_endpoints_quote_slug_and_shortcode() -> None:
     assert build_workable_job_detail_endpoint("Acme AI", "A/B") == (
         "https://apply.workable.com/api/v2/accounts/acme%20ai/jobs/A%2FB"
     )
+
+
+@pytest.mark.skip(reason="TDD stub - not yet implemented")
+def test_collect_workable_boards_resumes_existing_raw_file(tmp_path) -> None:
+    """(07-ats-collection-resilience, US-2)
+
+    Workable collection with resume enabled should skip an existing valid raw
+    file for the same collection date and slug, add it to resumed_files, and
+    fetch only missing boards.
+    """
+    raise NotImplementedError("TDD stub - Workable resume skips valid raw file")
+
+
+@pytest.mark.skip(reason="TDD stub - not yet implemented")
+def test_collect_workable_boards_refetches_invalid_resume_file(tmp_path) -> None:
+    """(07-ats-collection-resilience, US-5)
+
+    Workable collection with resume enabled should ignore a corrupt or mismatched
+    raw file and refetch the board instead of treating it as successful.
+    """
+    raise NotImplementedError("TDD stub - invalid resume file is refetched")

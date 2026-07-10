@@ -11,7 +11,7 @@ import httpx
 
 from ai_hiring_radar.config import CountriesConfig, CountryConfig, SearchLocationConfig
 from ai_hiring_radar.models import SourceMode, SourceName
-from ai_hiring_radar.query_builder import LocationDepth, iter_search_locations
+from ai_hiring_radar.search_locations import LocationDepth, iter_search_locations
 from ai_hiring_radar.storage_json import (
     DEFAULT_DATA_DIR,
     ats_discovery_dir,

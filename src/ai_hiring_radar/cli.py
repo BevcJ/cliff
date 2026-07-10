@@ -30,12 +30,8 @@ from ai_hiring_radar.job_description_extraction import (
     run_job_description_extraction,
 )
 from ai_hiring_radar.llm_usage import format_usage_summary, format_usd
-from ai_hiring_radar.normalize import process_collection
-from ai_hiring_radar.query_builder import (
-    LocationDepth,
-    SearchQuery,
-    generate_search_queries,
-)
+from ai_hiring_radar.processing import process_collection
+from ai_hiring_radar.search_locations import LocationDepth
 from ai_hiring_radar.sources.ashby import (
     AshbyClient,
     AshbyDiscoveryDepth,
@@ -125,7 +121,7 @@ from ai_hiring_radar.sources.workable import (
     generate_workable_discovery_queries,
     normalize_workable_board,
 )
-from ai_hiring_radar.sources.serper_google import SerperGoogleClient, collect_searches
+from ai_hiring_radar.sources.serper_google import SerperGoogleClient
 from ai_hiring_radar.storage_json import DEFAULT_DATA_DIR, ats_discovery_dir, read_json
 
 
@@ -206,54 +202,6 @@ def _parse_role_terms(role: str | None) -> list[str]:
         )
 
     return [selected_role]
-
-
-def _build_search_queries(
-    *,
-    country_codes: list[str],
-    role: str | None = None,
-    limit: int | None = None,
-    location_depth: LocationDepth = LocationDepth.COUNTRY,
-) -> list[SearchQuery]:
-    countries_config = load_countries_config()
-    role_terms = _parse_role_terms(role)
-    return generate_search_queries(
-        countries_config=countries_config,
-        country_codes=country_codes,
-        role_terms=role_terms,
-        limit=limit,
-        location_depth=location_depth,
-    )
-
-
-def _print_collection_plan(
-    country_codes: list[str],
-    *,
-    location_depth: LocationDepth = LocationDepth.COUNTRY,
-) -> None:
-    countries_config = load_countries_config()
-    search_queries = _build_search_queries(
-        country_codes=country_codes,
-        location_depth=location_depth,
-    )
-    country_names = [countries_config.countries[code].name for code in country_codes]
-
-    console.print(f"Countries: {', '.join(country_names)}")
-    console.print(f"Location depth: {location_depth.value}")
-    console.print(f"Queries: {len(search_queries)}")
-
-
-def _print_dry_run_queries(search_queries: list[SearchQuery]) -> None:
-    console.print(
-        f"Generated {len(search_queries)} LinkedIn-safe Serper Google queries."
-    )
-    for index, search_query in enumerate(search_queries, start=1):
-        console.print(
-            f"{index}. "
-            f"[{search_query.country_code}/{search_query.search_location_label}] "
-            f"{search_query.search_query}",
-            markup=False,
-        )
 
 
 def _build_ashby_discovery_queries(
@@ -543,79 +491,6 @@ def _print_workable_discovery_queries(search_queries) -> None:  # noqa: ANN001
             f"{search_query.search_query}",
             markup=False,
         )
-
-
-@app.command()
-def collect(
-    countries: Annotated[
-        str,
-        typer.Option(
-            "--countries",
-            help="Comma-separated country codes, for example: nl,uk,dk.",
-        ),
-    ] = "nl,uk,dk",
-    limit: Annotated[
-        int | None,
-        typer.Option(
-            "--limit",
-            min=1,
-            help="Limit the number of generated queries.",
-        ),
-    ] = None,
-    role: Annotated[
-        str | None,
-        typer.Option(
-            "--role",
-            help="Run one known role term, for example: AI Product Manager.",
-        ),
-    ] = None,
-    dry_run: Annotated[
-        bool,
-        typer.Option(
-            "--dry-run",
-            help="Print generated queries without calling Serper.",
-        ),
-    ] = False,
-    location_depth: Annotated[
-        str,
-        typer.Option(
-            "--location-depth",
-            help="Search location depth: country or cities.",
-        ),
-    ] = LocationDepth.COUNTRY.value,
-) -> None:
-    """Collect raw Serper Google Search responses."""
-    country_codes = _parse_country_codes(countries)
-    parsed_location_depth = _parse_location_depth(location_depth)
-    search_queries = _build_search_queries(
-        country_codes=country_codes,
-        role=role,
-        limit=limit,
-        location_depth=parsed_location_depth,
-    )
-
-    if dry_run:
-        _print_dry_run_queries(search_queries)
-        return
-
-    try:
-        api_key = require_serper_api_key()
-    except RuntimeError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
-
-    client = SerperGoogleClient(api_key=api_key)
-    try:
-        result = collect_searches(search_queries, client=client)
-    finally:
-        client.close()
-
-    console.print(
-        "Collection complete: "
-        f"{result.successful_count}/{result.query_count} raw file(s) written; "
-        f"{result.error_count} error(s)."
-    )
-    console.print(f"Manifest: {result.manifest_path.as_posix()}")
 
 
 @app.command("discover-ashby")
@@ -2955,61 +2830,6 @@ def inspect_command(
         _launch_inspection_app(collection_date)
     except subprocess.CalledProcessError as exc:
         raise typer.Exit(code=exc.returncode) from exc
-
-
-@app.command()
-def run(
-    countries: Annotated[
-        str,
-        typer.Option(
-            "--countries",
-            help="Comma-separated country codes, for example: nl,uk,dk.",
-        ),
-    ] = "nl,uk,dk",
-    location_depth: Annotated[
-        str,
-        typer.Option(
-            "--location-depth",
-            help="Search location depth: country or cities.",
-        ),
-    ] = LocationDepth.COUNTRY.value,
-) -> None:
-    """Run collection, processing, and export for the selected countries."""
-    country_codes = _parse_country_codes(countries)
-    parsed_location_depth = _parse_location_depth(location_depth)
-    _print_collection_plan(country_codes, location_depth=parsed_location_depth)
-    try:
-        api_key = require_serper_api_key()
-    except RuntimeError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
-
-    search_queries = _build_search_queries(
-        country_codes=country_codes,
-        location_depth=parsed_location_depth,
-    )
-    client = SerperGoogleClient(api_key=api_key)
-    try:
-        collection_result = collect_searches(search_queries, client=client)
-    finally:
-        client.close()
-
-    collection_date = collection_result.manifest_path.parent.parent.name
-    processing_result = process_collection(collection_date)
-    export_result = export_company_review_files(collection_date)
-
-    console.print(
-        "Run complete: "
-        f"{collection_result.successful_count}/{collection_result.query_count} "
-        "raw file(s), "
-        f"{processing_result.company_count} company record(s), "
-        f"{export_result.company_count} exported company record(s)."
-    )
-    console.print(f"Manifest: {collection_result.manifest_path.as_posix()}")
-    console.print(f"Candidates: {processing_result.job_candidates_path.as_posix()}")
-    console.print(f"Companies: {processing_result.companies_path.as_posix()}")
-    console.print(f"CSV: {export_result.csv_path.as_posix()}")
-    console.print(f"Markdown: {export_result.markdown_path.as_posix()}")
 
 
 def main() -> None:

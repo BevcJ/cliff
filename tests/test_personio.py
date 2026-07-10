@@ -4,8 +4,9 @@ from typing import Any
 import httpx
 
 from ai_hiring_radar.config import load_countries_config
-from ai_hiring_radar.normalize import normalize_raw_ats_file, process_collection
-from ai_hiring_radar.query_builder import LocationDepth
+from ai_hiring_radar.normalizers.ats.registry import normalize_raw_ats_file
+from ai_hiring_radar.processing import process_collection
+from ai_hiring_radar.search_locations import LocationDepth
 from ai_hiring_radar.sources.ats_discovery import AtsDiscoveryDepth
 from ai_hiring_radar.sources.personio import (
     PersonioClient,
