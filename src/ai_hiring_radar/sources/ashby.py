@@ -31,8 +31,16 @@ from ai_hiring_radar.sources.ats_discovery import (
     extract_ats_board_records,
     generate_ats_discovery_queries,
 )
+from ai_hiring_radar.sources.collection_resilience import (
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_REQUEST_DELAY_SECONDS,
+    ResilientHttpRequester,
+    is_valid_raw_ats_resume_file,
+    raw_ats_response_path,
+)
 from ai_hiring_radar.storage_json import (
     DEFAULT_DATA_DIR,
+    format_date,
     raw_ats_dir,
     write_json,
     write_raw_ats_response,
@@ -118,11 +126,21 @@ class AshbyCollectionResult:
     manifest_path: Path
     board_count: int
     result_files: list[str]
+    written_files: list[str]
+    resumed_files: list[str]
     errors: list[dict[str, Any]]
 
     @property
     def successful_count(self) -> int:
         return len(self.result_files)
+
+    @property
+    def written_count(self) -> int:
+        return len(self.written_files)
+
+    @property
+    def resumed_count(self) -> int:
+        return len(self.resumed_files)
 
     @property
     def error_count(self) -> int:
@@ -285,25 +303,23 @@ class AshbyClient:
         endpoint: str = ASHBY_PUBLIC_GRAPHQL_URL,
         timeout: float = 30.0,
         http_client: httpx.Client | None = None,
-        request_delay_seconds: float = 0.2,
+        request_delay_seconds: float = DEFAULT_REQUEST_DELAY_SECONDS,
+        max_retries: int = DEFAULT_MAX_RETRIES,
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         self.endpoint = endpoint
         self._client = http_client or httpx.Client(timeout=timeout)
         self._owns_client = http_client is None
-        self._request_delay_seconds = max(request_delay_seconds, 0.0)
-        self._sleeper = sleeper
-        self._request_count = 0
-
-    def _wait_between_requests(self) -> None:
-        if self._request_count > 0 and self._request_delay_seconds > 0:
-            self._sleeper(self._request_delay_seconds)
-        self._request_count += 1
+        self._requester = ResilientHttpRequester(
+            http_client=self._client,
+            request_delay_seconds=request_delay_seconds,
+            max_retries=max_retries,
+            sleeper=sleeper,
+        )
 
     def fetch_board(self, board_url_or_slug: str) -> dict[str, Any]:
         board = normalize_ashby_board(board_url_or_slug)
-        self._wait_between_requests()
-        response = self._client.post(
+        response = self._requester.post(
             self.endpoint,
             headers={
                 "Content-Type": "application/json",
@@ -311,7 +327,6 @@ class AshbyClient:
             },
             json=build_job_board_request_body(board.platform_company_slug),
         )
-        response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, dict):
             raise ValueError("Expected Ashby to return a JSON object.")
@@ -324,8 +339,7 @@ class AshbyClient:
         job_posting_id: str,
     ) -> dict[str, Any]:
         board = normalize_ashby_board(board_url_or_slug)
-        self._wait_between_requests()
-        response = self._client.post(
+        response = self._requester.post(
             ASHBY_JOB_POSTING_GRAPHQL_URL,
             headers={
                 "Content-Type": "application/json",
@@ -336,7 +350,6 @@ class AshbyClient:
                 job_posting_id=job_posting_id,
             ),
         )
-        response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, dict):
             raise ValueError("Expected Ashby job detail to return a JSON object.")
@@ -479,6 +492,8 @@ def collect_ashby_boards(
     client: AshbyClient,
     data_dir: Path = DEFAULT_DATA_DIR,
     clock: Callable[[], str] = utc_now_iso,
+    collection_date: str | None = None,
+    resume: bool = True,
 ) -> AshbyCollectionResult:
     boards_by_slug: dict[str, AshbyBoard] = {}
     for value in board_urls_or_slugs:
@@ -487,11 +502,31 @@ def collect_ashby_boards(
 
     boards = list(boards_by_slug.values())
     started_at = clock()
-    collection_date = started_at[:10]
+    effective_collection_date = format_date(
+        collection_date if collection_date is not None else started_at[:10]
+    )
     result_files: list[str] = []
+    written_files: list[str] = []
+    resumed_files: list[str] = []
     errors: list[dict[str, Any]] = []
 
     for board in boards:
+        resume_path = raw_ats_response_path(
+            platform_company_slug=board.platform_company_slug,
+            collection_date=effective_collection_date,
+            data_dir=data_dir,
+            platform=SourceName.ASHBY.value,
+        )
+        if resume and is_valid_raw_ats_resume_file(
+            resume_path,
+            platform=SourceName.ASHBY.value,
+            platform_company_slug=board.platform_company_slug,
+        ):
+            output_file = resume_path.as_posix()
+            result_files.append(output_file)
+            resumed_files.append(output_file)
+            continue
+
         try:
             response = client.fetch_board(board.board_url)
             job_detail_responses: dict[str, Any] = {}
@@ -522,12 +557,13 @@ def collect_ashby_boards(
             path = write_raw_ats_response(
                 raw_record,
                 platform_company_slug=board.platform_company_slug,
-                collection_date=collection_date,
+                collection_date=effective_collection_date,
                 data_dir=data_dir,
                 platform=SourceName.ASHBY.value,
             )
             output_file = path.as_posix()
             result_files.append(output_file)
+            written_files.append(output_file)
 
             if not _has_job_board(response):
                 errors.append(
@@ -548,7 +584,7 @@ def collect_ashby_boards(
 
     finished_at = clock()
     manifest_path = raw_ats_dir(
-        collection_date,
+        effective_collection_date,
         data_dir=data_dir,
         platform=SourceName.ASHBY.value,
     ) / "manifest.json"
@@ -563,6 +599,8 @@ def collect_ashby_boards(
             "finished_at": finished_at,
             "board_count": len(boards),
             "result_files": result_files,
+            "written_files": written_files,
+            "resumed_files": resumed_files,
             "errors": errors,
         },
     )
@@ -571,5 +609,7 @@ def collect_ashby_boards(
         manifest_path=manifest_path,
         board_count=len(boards),
         result_files=result_files,
+        written_files=written_files,
+        resumed_files=resumed_files,
         errors=errors,
     )

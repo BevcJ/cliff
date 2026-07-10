@@ -36,6 +36,11 @@ from ai_hiring_radar.query_builder import (
     SearchQuery,
     generate_search_queries,
 )
+from ai_hiring_radar.sources.collection_resilience import (
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_REQUEST_DELAY_SECONDS,
+    read_ats_board_file,
+)
 from ai_hiring_radar.sources.ashby import (
     AshbyClient,
     AshbyDiscoveryDepth,
@@ -153,9 +158,40 @@ def _parse_country_codes(countries: str) -> list[str]:
 
 def _parse_iso_date(value: str) -> str:
     try:
-        return date.fromisoformat(value).isoformat()
+        parsed = date.fromisoformat(value)
     except ValueError as exc:
         raise typer.BadParameter("Date must use YYYY-MM-DD format.") from exc
+    if parsed.isoformat() != value:
+        raise typer.BadParameter("Date must use YYYY-MM-DD format.")
+    return value
+
+
+def _resolve_explicit_board_values(
+    board_urls: list[str] | None,
+    boards_file: Path | None,
+    normalize_board,  # noqa: ANN001 - provider normalizers return distinct board types.
+) -> tuple[bool, list[str]]:
+    explicit_input = board_urls is not None or boards_file is not None
+    if not explicit_input:
+        return False, []
+
+    values = list(board_urls or [])
+    if boards_file is not None:
+        try:
+            values.extend(read_ats_board_file(boards_file))
+        except (OSError, ValueError, RecursionError) as exc:
+            console.print(f"[red]Could not read boards file: {exc}[/red]")
+            raise typer.Exit(code=1) from exc
+
+    board_values: list[str] = []
+    seen_slugs: set[str] = set()
+    for value in values:
+        board = normalize_board(value)
+        if board.platform_company_slug in seen_slugs:
+            continue
+        seen_slugs.add(board.platform_company_slug)
+        board_values.append(board.board_url)
+    return True, board_values
 
 
 def _launch_inspection_app(collection_date: str) -> None:
@@ -729,6 +765,44 @@ def collect_ashby(
             help="Ashby board URL or slug. Can be repeated to skip discovery.",
         ),
     ] = None,
+    boards_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--boards-file",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="JSONL or plain-text file containing Ashby board values.",
+        ),
+    ] = None,
+    collection_date: Annotated[
+        str | None,
+        typer.Option("--collection-date", help="Collection date in YYYY-MM-DD format."),
+    ] = None,
+    resume: Annotated[
+        bool,
+        typer.Option(
+            "--resume/--no-resume",
+            help="Reuse successful board results already collected for this date.",
+        ),
+    ] = True,
+    request_delay_seconds: Annotated[
+        float,
+        typer.Option(
+            "--request-delay",
+            min=0,
+            help="Delay in seconds between provider requests.",
+        ),
+    ] = DEFAULT_REQUEST_DELAY_SECONDS,
+    max_retries: Annotated[
+        int,
+        typer.Option(
+            "--max-retries",
+            min=0,
+            help="Maximum retries for transient provider request failures.",
+        ),
+    ] = DEFAULT_MAX_RETRIES,
     limit: Annotated[
         int | None,
         typer.Option(
@@ -777,11 +851,16 @@ def collect_ashby(
     ] = DEFAULT_ASHBY_DISCOVERY_PAGES,
 ) -> None:
     """Discover Ashby boards and collect public ATS job data."""
-    manual_board_values = board_url or []
-    parsed_boards = [normalize_ashby_board(value) for value in manual_board_values]
+    parsed_collection_date = (
+        _parse_iso_date(collection_date) if collection_date is not None else None
+    )
+    explicit_input, board_values = _resolve_explicit_board_values(
+        board_url,
+        boards_file,
+        normalize_ashby_board,
+    )
 
-    if parsed_boards:
-        board_values = [board.board_url for board in parsed_boards]
+    if explicit_input:
         if dry_run:
             console.print(f"Normalized {len(board_values)} Ashby board URL(s).")
             for value in board_values:
@@ -831,15 +910,26 @@ def collect_ashby(
         console.print("No Ashby boards to collect.")
         return
 
-    ashby_client = AshbyClient()
+    ashby_client = AshbyClient(
+        request_delay_seconds=request_delay_seconds,
+        max_retries=max_retries,
+    )
     try:
-        result = collect_ashby_boards(board_values, client=ashby_client)
+        result = collect_ashby_boards(
+            board_values,
+            client=ashby_client,
+            collection_date=parsed_collection_date,
+            resume=resume,
+        )
     finally:
         ashby_client.close()
 
     console.print(
         "Ashby collection complete: "
-        f"{result.successful_count}/{result.board_count} raw board file(s) written; "
+        f"{result.board_count} board(s), "
+        f"{len(result.result_files)} result file(s) available, "
+        f"{result.written_count} written, "
+        f"{result.resumed_count} resumed, "
         f"{result.error_count} error(s)."
     )
     console.print(f"Manifest: {result.manifest_path.as_posix()}")
@@ -956,6 +1046,44 @@ def collect_greenhouse(
             help="Greenhouse board URL or token. Can be repeated to skip discovery.",
         ),
     ] = None,
+    boards_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--boards-file",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="JSONL or plain-text file containing Greenhouse board values.",
+        ),
+    ] = None,
+    collection_date: Annotated[
+        str | None,
+        typer.Option("--collection-date", help="Collection date in YYYY-MM-DD format."),
+    ] = None,
+    resume: Annotated[
+        bool,
+        typer.Option(
+            "--resume/--no-resume",
+            help="Reuse successful board results already collected for this date.",
+        ),
+    ] = True,
+    request_delay_seconds: Annotated[
+        float,
+        typer.Option(
+            "--request-delay",
+            min=0,
+            help="Delay in seconds between provider requests.",
+        ),
+    ] = DEFAULT_REQUEST_DELAY_SECONDS,
+    max_retries: Annotated[
+        int,
+        typer.Option(
+            "--max-retries",
+            min=0,
+            help="Maximum retries for transient provider request failures.",
+        ),
+    ] = DEFAULT_MAX_RETRIES,
     limit: Annotated[
         int | None,
         typer.Option(
@@ -1004,11 +1132,16 @@ def collect_greenhouse(
     ] = DEFAULT_GREENHOUSE_DISCOVERY_PAGES,
 ) -> None:
     """Discover Greenhouse boards and collect public ATS job data."""
-    manual_board_values = board_url or []
-    parsed_boards = [normalize_greenhouse_board(value) for value in manual_board_values]
+    parsed_collection_date = (
+        _parse_iso_date(collection_date) if collection_date is not None else None
+    )
+    explicit_input, board_values = _resolve_explicit_board_values(
+        board_url,
+        boards_file,
+        normalize_greenhouse_board,
+    )
 
-    if parsed_boards:
-        board_values = [board.board_url for board in parsed_boards]
+    if explicit_input:
         if dry_run:
             console.print(f"Normalized {len(board_values)} Greenhouse board URL(s).")
             for value in board_values:
@@ -1058,15 +1191,26 @@ def collect_greenhouse(
         console.print("No Greenhouse boards to collect.")
         return
 
-    greenhouse_client = GreenhouseClient()
+    greenhouse_client = GreenhouseClient(
+        request_delay_seconds=request_delay_seconds,
+        max_retries=max_retries,
+    )
     try:
-        result = collect_greenhouse_boards(board_values, client=greenhouse_client)
+        result = collect_greenhouse_boards(
+            board_values,
+            client=greenhouse_client,
+            collection_date=parsed_collection_date,
+            resume=resume,
+        )
     finally:
         greenhouse_client.close()
 
     console.print(
         "Greenhouse collection complete: "
-        f"{result.successful_count}/{result.board_count} raw board file(s) written; "
+        f"{result.board_count} board(s), "
+        f"{len(result.result_files)} result file(s) available, "
+        f"{result.written_count} written, "
+        f"{result.resumed_count} resumed, "
         f"{result.error_count} error(s)."
     )
     console.print(f"Manifest: {result.manifest_path.as_posix()}")
@@ -1183,6 +1327,44 @@ def collect_lever(
             help="Lever board URL or site slug. Can be repeated to skip discovery.",
         ),
     ] = None,
+    boards_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--boards-file",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="JSONL or plain-text file containing Lever board values.",
+        ),
+    ] = None,
+    collection_date: Annotated[
+        str | None,
+        typer.Option("--collection-date", help="Collection date in YYYY-MM-DD format."),
+    ] = None,
+    resume: Annotated[
+        bool,
+        typer.Option(
+            "--resume/--no-resume",
+            help="Reuse successful board results already collected for this date.",
+        ),
+    ] = True,
+    request_delay_seconds: Annotated[
+        float,
+        typer.Option(
+            "--request-delay",
+            min=0,
+            help="Delay in seconds between provider requests.",
+        ),
+    ] = DEFAULT_REQUEST_DELAY_SECONDS,
+    max_retries: Annotated[
+        int,
+        typer.Option(
+            "--max-retries",
+            min=0,
+            help="Maximum retries for transient provider request failures.",
+        ),
+    ] = DEFAULT_MAX_RETRIES,
     limit: Annotated[
         int | None,
         typer.Option(
@@ -1231,11 +1413,16 @@ def collect_lever(
     ] = DEFAULT_LEVER_DISCOVERY_PAGES,
 ) -> None:
     """Discover Lever boards and collect public ATS job data."""
-    manual_board_values = board_url or []
-    parsed_boards = [normalize_lever_board(value) for value in manual_board_values]
+    parsed_collection_date = (
+        _parse_iso_date(collection_date) if collection_date is not None else None
+    )
+    explicit_input, board_values = _resolve_explicit_board_values(
+        board_url,
+        boards_file,
+        normalize_lever_board,
+    )
 
-    if parsed_boards:
-        board_values = [board.board_url for board in parsed_boards]
+    if explicit_input:
         if dry_run:
             console.print(f"Normalized {len(board_values)} Lever board URL(s).")
             for value in board_values:
@@ -1285,15 +1472,26 @@ def collect_lever(
         console.print("No Lever boards to collect.")
         return
 
-    lever_client = LeverClient()
+    lever_client = LeverClient(
+        request_delay_seconds=request_delay_seconds,
+        max_retries=max_retries,
+    )
     try:
-        result = collect_lever_boards(board_values, client=lever_client)
+        result = collect_lever_boards(
+            board_values,
+            client=lever_client,
+            collection_date=parsed_collection_date,
+            resume=resume,
+        )
     finally:
         lever_client.close()
 
     console.print(
         "Lever collection complete: "
-        f"{result.successful_count}/{result.board_count} raw board file(s) written; "
+        f"{result.board_count} board(s), "
+        f"{len(result.result_files)} result file(s) available, "
+        f"{result.written_count} written, "
+        f"{result.resumed_count} resumed, "
         f"{result.error_count} error(s)."
     )
     console.print(f"Manifest: {result.manifest_path.as_posix()}")
@@ -1410,6 +1608,44 @@ def collect_personio(
             help="Personio board URL or company slug. Can be repeated to skip discovery.",
         ),
     ] = None,
+    boards_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--boards-file",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="JSONL or plain-text file containing Personio board values.",
+        ),
+    ] = None,
+    collection_date: Annotated[
+        str | None,
+        typer.Option("--collection-date", help="Collection date in YYYY-MM-DD format."),
+    ] = None,
+    resume: Annotated[
+        bool,
+        typer.Option(
+            "--resume/--no-resume",
+            help="Reuse successful board results already collected for this date.",
+        ),
+    ] = True,
+    request_delay_seconds: Annotated[
+        float,
+        typer.Option(
+            "--request-delay",
+            min=0,
+            help="Delay in seconds between provider requests.",
+        ),
+    ] = DEFAULT_REQUEST_DELAY_SECONDS,
+    max_retries: Annotated[
+        int,
+        typer.Option(
+            "--max-retries",
+            min=0,
+            help="Maximum retries for transient provider request failures.",
+        ),
+    ] = DEFAULT_MAX_RETRIES,
     language: Annotated[
         str,
         typer.Option(
@@ -1465,11 +1701,16 @@ def collect_personio(
     ] = DEFAULT_PERSONIO_DISCOVERY_PAGES,
 ) -> None:
     """Discover Personio boards and collect public ATS job data."""
-    manual_board_values = board_url or []
-    parsed_boards = [normalize_personio_board(value) for value in manual_board_values]
+    parsed_collection_date = (
+        _parse_iso_date(collection_date) if collection_date is not None else None
+    )
+    explicit_input, board_values = _resolve_explicit_board_values(
+        board_url,
+        boards_file,
+        normalize_personio_board,
+    )
 
-    if parsed_boards:
-        board_values = [board.board_url for board in parsed_boards]
+    if explicit_input:
         if dry_run:
             console.print(f"Normalized {len(board_values)} Personio board URL(s).")
             for value in board_values:
@@ -1519,15 +1760,27 @@ def collect_personio(
         console.print("No Personio boards to collect.")
         return
 
-    personio_client = PersonioClient(language=language)
+    personio_client = PersonioClient(
+        language=language,
+        request_delay_seconds=request_delay_seconds,
+        max_retries=max_retries,
+    )
     try:
-        result = collect_personio_boards(board_values, client=personio_client)
+        result = collect_personio_boards(
+            board_values,
+            client=personio_client,
+            collection_date=parsed_collection_date,
+            resume=resume,
+        )
     finally:
         personio_client.close()
 
     console.print(
         "Personio collection complete: "
-        f"{result.successful_count}/{result.board_count} raw board file(s) written; "
+        f"{result.board_count} board(s), "
+        f"{len(result.result_files)} result file(s) available, "
+        f"{result.written_count} written, "
+        f"{result.resumed_count} resumed, "
         f"{result.error_count} error(s)."
     )
     console.print(f"Manifest: {result.manifest_path.as_posix()}")
@@ -1739,6 +1992,44 @@ def collect_recruitee(
             help="Recruitee board URL or company slug. Can be repeated to skip discovery.",
         ),
     ] = None,
+    boards_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--boards-file",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="JSONL or plain-text file containing Recruitee board values.",
+        ),
+    ] = None,
+    collection_date: Annotated[
+        str | None,
+        typer.Option("--collection-date", help="Collection date in YYYY-MM-DD format."),
+    ] = None,
+    resume: Annotated[
+        bool,
+        typer.Option(
+            "--resume/--no-resume",
+            help="Reuse successful board results already collected for this date.",
+        ),
+    ] = True,
+    request_delay_seconds: Annotated[
+        float,
+        typer.Option(
+            "--request-delay",
+            min=0,
+            help="Delay in seconds between provider requests.",
+        ),
+    ] = DEFAULT_REQUEST_DELAY_SECONDS,
+    max_retries: Annotated[
+        int,
+        typer.Option(
+            "--max-retries",
+            min=0,
+            help="Maximum retries for transient provider request failures.",
+        ),
+    ] = DEFAULT_MAX_RETRIES,
     limit: Annotated[
         int | None,
         typer.Option(
@@ -1787,11 +2078,16 @@ def collect_recruitee(
     ] = DEFAULT_RECRUITEE_DISCOVERY_PAGES,
 ) -> None:
     """Discover Recruitee boards and collect public job listings with details."""
-    manual_board_values = board_url or []
-    parsed_boards = [normalize_recruitee_board(value) for value in manual_board_values]
+    parsed_collection_date = (
+        _parse_iso_date(collection_date) if collection_date is not None else None
+    )
+    explicit_input, board_values = _resolve_explicit_board_values(
+        board_url,
+        boards_file,
+        normalize_recruitee_board,
+    )
 
-    if parsed_boards:
-        board_values = [board.board_url for board in parsed_boards]
+    if explicit_input:
         if dry_run:
             console.print(f"Normalized {len(board_values)} Recruitee board URL(s).")
             for value in board_values:
@@ -1841,15 +2137,26 @@ def collect_recruitee(
         console.print("No Recruitee boards to collect.")
         return
 
-    recruitee_client = RecruiteeClient()
+    recruitee_client = RecruiteeClient(
+        request_delay_seconds=request_delay_seconds,
+        max_retries=max_retries,
+    )
     try:
-        result = collect_recruitee_boards(board_values, client=recruitee_client)
+        result = collect_recruitee_boards(
+            board_values,
+            client=recruitee_client,
+            collection_date=parsed_collection_date,
+            resume=resume,
+        )
     finally:
         recruitee_client.close()
 
     console.print(
         "Recruitee collection complete: "
-        f"{result.successful_count}/{result.board_count} raw board file(s) written; "
+        f"{result.board_count} board(s), "
+        f"{len(result.result_files)} result file(s) available, "
+        f"{result.written_count} written, "
+        f"{result.resumed_count} resumed, "
         f"{result.error_count} error(s)."
     )
     console.print(f"Manifest: {result.manifest_path.as_posix()}")
@@ -1874,6 +2181,44 @@ def collect_teamtailor(
             ),
         ),
     ] = None,
+    boards_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--boards-file",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="JSONL or plain-text file containing Teamtailor board values.",
+        ),
+    ] = None,
+    collection_date: Annotated[
+        str | None,
+        typer.Option("--collection-date", help="Collection date in YYYY-MM-DD format."),
+    ] = None,
+    resume: Annotated[
+        bool,
+        typer.Option(
+            "--resume/--no-resume",
+            help="Reuse successful board results already collected for this date.",
+        ),
+    ] = True,
+    request_delay_seconds: Annotated[
+        float,
+        typer.Option(
+            "--request-delay",
+            min=0,
+            help="Delay in seconds between provider requests.",
+        ),
+    ] = DEFAULT_REQUEST_DELAY_SECONDS,
+    max_retries: Annotated[
+        int,
+        typer.Option(
+            "--max-retries",
+            min=0,
+            help="Maximum retries for transient provider request failures.",
+        ),
+    ] = DEFAULT_MAX_RETRIES,
     limit: Annotated[
         int | None,
         typer.Option(
@@ -1922,11 +2267,16 @@ def collect_teamtailor(
     ] = DEFAULT_TEAMTAILOR_DISCOVERY_PAGES,
 ) -> None:
     """Discover Teamtailor boards and collect public RSS job data."""
-    manual_board_values = board_url or []
-    parsed_boards = [normalize_teamtailor_board(value) for value in manual_board_values]
+    parsed_collection_date = (
+        _parse_iso_date(collection_date) if collection_date is not None else None
+    )
+    explicit_input, board_values = _resolve_explicit_board_values(
+        board_url,
+        boards_file,
+        normalize_teamtailor_board,
+    )
 
-    if parsed_boards:
-        board_values = [board.board_url for board in parsed_boards]
+    if explicit_input:
         if dry_run:
             console.print(f"Normalized {len(board_values)} Teamtailor board URL(s).")
             for value in board_values:
@@ -1976,15 +2326,26 @@ def collect_teamtailor(
         console.print("No Teamtailor boards to collect.")
         return
 
-    teamtailor_client = TeamtailorClient()
+    teamtailor_client = TeamtailorClient(
+        request_delay_seconds=request_delay_seconds,
+        max_retries=max_retries,
+    )
     try:
-        result = collect_teamtailor_boards(board_values, client=teamtailor_client)
+        result = collect_teamtailor_boards(
+            board_values,
+            client=teamtailor_client,
+            collection_date=parsed_collection_date,
+            resume=resume,
+        )
     finally:
         teamtailor_client.close()
 
     console.print(
         "Teamtailor collection complete: "
-        f"{result.successful_count}/{result.board_count} raw board file(s) written; "
+        f"{result.board_count} board(s), "
+        f"{len(result.result_files)} result file(s) available, "
+        f"{result.written_count} written, "
+        f"{result.resumed_count} resumed, "
         f"{result.error_count} error(s)."
     )
     console.print(f"Manifest: {result.manifest_path.as_posix()}")
@@ -2104,6 +2465,44 @@ def collect_smartrecruiters(
             ),
         ),
     ] = None,
+    boards_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--boards-file",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="JSONL or plain-text file containing SmartRecruiters board values.",
+        ),
+    ] = None,
+    collection_date: Annotated[
+        str | None,
+        typer.Option("--collection-date", help="Collection date in YYYY-MM-DD format."),
+    ] = None,
+    resume: Annotated[
+        bool,
+        typer.Option(
+            "--resume/--no-resume",
+            help="Reuse successful board results already collected for this date.",
+        ),
+    ] = True,
+    request_delay_seconds: Annotated[
+        float,
+        typer.Option(
+            "--request-delay",
+            min=0,
+            help="Delay in seconds between provider requests.",
+        ),
+    ] = DEFAULT_REQUEST_DELAY_SECONDS,
+    max_retries: Annotated[
+        int,
+        typer.Option(
+            "--max-retries",
+            min=0,
+            help="Maximum retries for transient provider request failures.",
+        ),
+    ] = DEFAULT_MAX_RETRIES,
     limit: Annotated[
         int | None,
         typer.Option(
@@ -2152,13 +2551,16 @@ def collect_smartrecruiters(
     ] = DEFAULT_SMARTRECRUITERS_DISCOVERY_PAGES,
 ) -> None:
     """Discover SmartRecruiters boards and collect public ATS job data."""
-    manual_board_values = board_url or []
-    parsed_boards = [
-        normalize_smartrecruiters_board(value) for value in manual_board_values
-    ]
+    parsed_collection_date = (
+        _parse_iso_date(collection_date) if collection_date is not None else None
+    )
+    explicit_input, board_values = _resolve_explicit_board_values(
+        board_url,
+        boards_file,
+        normalize_smartrecruiters_board,
+    )
 
-    if parsed_boards:
-        board_values = [board.board_url for board in parsed_boards]
+    if explicit_input:
         if dry_run:
             console.print(
                 f"Normalized {len(board_values)} SmartRecruiters board URL(s)."
@@ -2210,18 +2612,26 @@ def collect_smartrecruiters(
         console.print("No SmartRecruiters boards to collect.")
         return
 
-    smartrecruiters_client = SmartRecruitersClient()
+    smartrecruiters_client = SmartRecruitersClient(
+        request_delay_seconds=request_delay_seconds,
+        max_retries=max_retries,
+    )
     try:
         result = collect_smartrecruiters_boards(
             board_values,
             client=smartrecruiters_client,
+            collection_date=parsed_collection_date,
+            resume=resume,
         )
     finally:
         smartrecruiters_client.close()
 
     console.print(
         "SmartRecruiters collection complete: "
-        f"{result.successful_count}/{result.board_count} raw board file(s) written; "
+        f"{result.board_count} board(s), "
+        f"{len(result.result_files)} result file(s) available, "
+        f"{result.written_count} written, "
+        f"{result.resumed_count} resumed, "
         f"{result.error_count} error(s)."
     )
     console.print(f"Manifest: {result.manifest_path.as_posix()}")
@@ -2338,6 +2748,44 @@ def collect_workable(
             help="Workable board URL or account slug. Can be repeated to skip discovery.",
         ),
     ] = None,
+    boards_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--boards-file",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            help="JSONL or plain-text file containing Workable board values.",
+        ),
+    ] = None,
+    collection_date: Annotated[
+        str | None,
+        typer.Option("--collection-date", help="Collection date in YYYY-MM-DD format."),
+    ] = None,
+    resume: Annotated[
+        bool,
+        typer.Option(
+            "--resume/--no-resume",
+            help="Reuse successful board results already collected for this date.",
+        ),
+    ] = True,
+    request_delay_seconds: Annotated[
+        float,
+        typer.Option(
+            "--request-delay",
+            min=0,
+            help="Delay in seconds between provider requests.",
+        ),
+    ] = DEFAULT_REQUEST_DELAY_SECONDS,
+    max_retries: Annotated[
+        int,
+        typer.Option(
+            "--max-retries",
+            min=0,
+            help="Maximum retries for transient provider request failures.",
+        ),
+    ] = DEFAULT_MAX_RETRIES,
     limit: Annotated[
         int | None,
         typer.Option(
@@ -2386,11 +2834,16 @@ def collect_workable(
     ] = DEFAULT_WORKABLE_DISCOVERY_PAGES,
 ) -> None:
     """Discover Workable boards and collect public title-only job listings."""
-    manual_board_values = board_url or []
-    parsed_boards = [normalize_workable_board(value) for value in manual_board_values]
+    parsed_collection_date = (
+        _parse_iso_date(collection_date) if collection_date is not None else None
+    )
+    explicit_input, board_values = _resolve_explicit_board_values(
+        board_url,
+        boards_file,
+        normalize_workable_board,
+    )
 
-    if parsed_boards:
-        board_values = [board.board_url for board in parsed_boards]
+    if explicit_input:
         if dry_run:
             console.print(f"Normalized {len(board_values)} Workable board URL(s).")
             for value in board_values:
@@ -2440,15 +2893,26 @@ def collect_workable(
         console.print("No Workable boards to collect.")
         return
 
-    workable_client = WorkableClient()
+    workable_client = WorkableClient(
+        request_delay_seconds=request_delay_seconds,
+        max_retries=max_retries,
+    )
     try:
-        result = collect_workable_boards(board_values, client=workable_client)
+        result = collect_workable_boards(
+            board_values,
+            client=workable_client,
+            collection_date=parsed_collection_date,
+            resume=resume,
+        )
     finally:
         workable_client.close()
 
     console.print(
         "Workable collection complete: "
-        f"{result.successful_count}/{result.board_count} raw board file(s) written; "
+        f"{result.board_count} board(s), "
+        f"{len(result.result_files)} result file(s) available, "
+        f"{result.written_count} written, "
+        f"{result.resumed_count} resumed, "
         f"{result.error_count} error(s)."
     )
     console.print(f"Manifest: {result.manifest_path.as_posix()}")

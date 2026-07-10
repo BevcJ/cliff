@@ -280,7 +280,11 @@ def test_recruitee_client_fetches_listing_and_detail_endpoints() -> None:
 
     transport = httpx.MockTransport(handler)
     with httpx.Client(transport=transport) as http_client:
-        client = RecruiteeClient(http_client=http_client, request_delay_seconds=0)
+        client = RecruiteeClient(
+            http_client=http_client,
+            request_delay_seconds=0,
+            max_retries=0,
+        )
         listing = client.fetch_board("https://acme-ai.recruitee.com")
         detail = client.fetch_offer_detail(
             board_url_or_slug="https://acme-ai.recruitee.com",
@@ -316,6 +320,10 @@ def test_collect_recruitee_boards_writes_raw_response_details_and_manifest(tmp_p
     )
 
     assert result.successful_count == 1
+    assert result.written_count == 1
+    assert result.resumed_count == 0
+    assert result.written_files == result.result_files
+    assert result.resumed_files == []
     assert result.board_count == 1
     assert result.error_count == 0
     assert client.fetched_details == [
@@ -340,7 +348,62 @@ def test_collect_recruitee_boards_writes_raw_response_details_and_manifest(tmp_p
     }
     assert sorted(raw_record["offer_detail_responses"]) == ["123", "125"]
     assert raw_record["offer_detail_errors"] == []
-    assert read_json(result.manifest_path)["result_files"] == result.result_files
+    manifest = read_json(result.manifest_path)
+    assert manifest["result_files"] == result.result_files
+    assert manifest["written_files"] == result.written_files
+    assert manifest["resumed_files"] == result.resumed_files
+
+
+def test_collect_recruitee_boards_resumes_valid_files_in_board_order_and_uses_explicit_date(
+    tmp_path,
+) -> None:
+    collection_date = "2026-06-20"
+    resumed_path = write_raw_ats_response(
+        build_raw_recruitee_response_record(
+            board=recruitee_board_from_slug("acme-ai"),
+            response={"offers": []},
+            collected_at="2026-06-19T10:00:00Z",
+        ),
+        platform_company_slug="acme-ai",
+        collection_date=collection_date,
+        data_dir=tmp_path,
+        platform="recruitee",
+    )
+    client = FakeRecruiteeClient({"offers": []}, {})
+    timestamps = iter(
+        [
+            "2026-06-21T10:00:00Z",
+            "2026-06-21T10:00:01Z",
+            "2026-06-21T10:00:02Z",
+        ]
+    )
+
+    result = collect_recruitee_boards(
+        ["acme-ai", "fresh-ai", "https://acme-ai.recruitee.com/jobs"],
+        client=client,  # type: ignore[arg-type]
+        collection_date=collection_date,
+        data_dir=tmp_path,
+        clock=lambda: next(timestamps),
+    )
+
+    written_path = (
+        tmp_path / "raw" / "ats" / collection_date / "recruitee" / "fresh-ai.json"
+    )
+    assert client.fetched_boards == ["https://fresh-ai.recruitee.com"]
+    assert result.board_count == 2
+    assert result.result_files == [resumed_path.as_posix(), written_path.as_posix()]
+    assert result.written_files == [written_path.as_posix()]
+    assert result.resumed_files == [resumed_path.as_posix()]
+    assert result.successful_count == 2
+    assert result.written_count == 1
+    assert result.resumed_count == 1
+    assert result.manifest_path.parent.name == "recruitee"
+    assert result.manifest_path.parent.parent.name == collection_date
+
+    manifest = read_json(result.manifest_path)
+    assert manifest["result_files"] == result.result_files
+    assert manifest["written_files"] == result.written_files
+    assert manifest["resumed_files"] == result.resumed_files
 
 
 def test_collect_recruitee_boards_records_detail_errors_without_failing_board(

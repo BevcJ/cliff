@@ -291,7 +291,11 @@ def test_ashby_client_posts_public_graphql_body() -> None:
 
     transport = httpx.MockTransport(handler)
     with httpx.Client(transport=transport) as http_client:
-        client = AshbyClient(http_client=http_client, request_delay_seconds=0)
+        client = AshbyClient(
+            http_client=http_client,
+            request_delay_seconds=0,
+            max_retries=0,
+        )
         payload = client.fetch_board("https://jobs.ashbyhq.com/everai")
 
     assert len(requests) == 1
@@ -320,7 +324,11 @@ def test_ashby_client_posts_job_detail_graphql_body() -> None:
 
     transport = httpx.MockTransport(handler)
     with httpx.Client(transport=transport) as http_client:
-        client = AshbyClient(http_client=http_client, request_delay_seconds=0)
+        client = AshbyClient(
+            http_client=http_client,
+            request_delay_seconds=0,
+            max_retries=0,
+        )
         payload = client.fetch_job_detail(
             board_url_or_slug="https://jobs.ashbyhq.com/everai",
             job_posting_id="job-ai-engineer",
@@ -343,6 +351,7 @@ def test_ashby_client_sleeps_between_api_calls() -> None:
         client = AshbyClient(
             http_client=http_client,
             request_delay_seconds=0.2,
+            max_retries=0,
             sleeper=sleeps.append,
         )
         client.fetch_board("https://jobs.ashbyhq.com/everai")
@@ -372,6 +381,10 @@ def test_collect_ashby_boards_writes_raw_response_and_manifest(tmp_path) -> None
     )
 
     assert result.successful_count == 1
+    assert result.written_count == 1
+    assert result.resumed_count == 0
+    assert result.written_files == result.result_files
+    assert result.resumed_files == []
     assert result.board_count == 1
     assert result.error_count == 0
     raw_record = read_json(Path(result.result_files[0]))
@@ -397,7 +410,47 @@ def test_collect_ashby_boards_writes_raw_response_and_manifest(tmp_path) -> None
         ("https://jobs.ashbyhq.com/everai", "job-ai-head"),
     ]
     assert raw_record["job_detail_errors"] == []
-    assert read_json(result.manifest_path)["result_files"] == result.result_files
+    manifest = read_json(result.manifest_path)
+    assert manifest["result_files"] == result.result_files
+    assert manifest["written_files"] == result.written_files
+    assert manifest["resumed_files"] == result.resumed_files
+
+
+def test_collect_ashby_boards_resumes_valid_raw_file(tmp_path) -> None:
+    board = ashby_board_from_slug("everai")
+    raw_path = write_raw_ats_response(
+        build_raw_ashby_response_record(
+            board=board,
+            response=_sample_ashby_response(),
+            collected_at="2026-06-16T09:00:00Z",
+        ),
+        platform_company_slug=board.platform_company_slug,
+        collection_date="2026-06-16",
+        data_dir=tmp_path,
+        platform="ashby",
+    )
+    client = FakeAshbyClient(_sample_ashby_response())
+    timestamps = iter(["2026-06-16T10:00:00Z", "2026-06-16T10:00:01Z"])
+
+    result = collect_ashby_boards(
+        [board.board_url],
+        client=client,  # type: ignore[arg-type]
+        data_dir=tmp_path,
+        clock=lambda: next(timestamps),
+    )
+
+    assert client.fetched_boards == []
+    assert client.fetched_job_details == []
+    assert result.result_files == [raw_path.as_posix()]
+    assert result.written_files == []
+    assert result.resumed_files == [raw_path.as_posix()]
+    assert result.successful_count == 1
+    assert result.written_count == 0
+    assert result.resumed_count == 1
+    manifest = read_json(result.manifest_path)
+    assert manifest["result_files"] == [raw_path.as_posix()]
+    assert manifest["written_files"] == []
+    assert manifest["resumed_files"] == [raw_path.as_posix()]
 
 
 def test_collect_ashby_boards_keeps_board_when_job_detail_fails(tmp_path) -> None:

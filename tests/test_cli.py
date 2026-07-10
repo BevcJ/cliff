@@ -6,6 +6,7 @@ import sys
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from typer.testing import CliRunner
 
 from ai_hiring_radar import cli
@@ -669,3 +670,345 @@ def test_collect_teamtailor_board_url_dry_run_prints_normalized_board() -> None:
     assert result.exit_code == 0
     assert "Normalized 1 Teamtailor board URL(s)." in result.output
     assert "https://acme.teamtailor.com" in result.output
+
+
+def test_collect_workable_jsonl_file_skips_serper(monkeypatch, tmp_path: Path) -> None:
+    boards_path = tmp_path / "boards.jsonl"
+    boards_path.write_text(
+        '{"board_url": "https://apply.workable.com/acme/jobs"}\n'
+        '{"board_url": "beta"}\n',
+        encoding="utf-8",
+    )
+    client_kwargs: list[dict[str, Any]] = []
+    collection_calls: list[dict[str, Any]] = []
+
+    class FakeWorkableClient:
+        def __init__(self, **kwargs: Any) -> None:
+            client_kwargs.append(kwargs)
+
+        def close(self) -> None:
+            pass
+
+    def fake_collect(board_values: list[str], **kwargs: Any) -> SimpleNamespace:
+        collection_calls.append({"board_values": list(board_values), **kwargs})
+        return SimpleNamespace(
+            manifest_path=Path("manifest.json"),
+            board_count=2,
+            result_files=["acme.json", "beta.json"],
+            written_count=2,
+            resumed_count=0,
+            error_count=0,
+        )
+
+    def fail_serper() -> None:
+        raise AssertionError("explicit board files must not access Serper")
+
+    monkeypatch.setattr(cli, "require_serper_api_key", fail_serper)
+    monkeypatch.setattr(cli, "WorkableClient", FakeWorkableClient)
+    monkeypatch.setattr(cli, "collect_workable_boards", fake_collect)
+
+    result = runner.invoke(
+        cli.app,
+        ["collect-workable", "--boards-file", str(boards_path)],
+    )
+
+    assert result.exit_code == 0
+    assert client_kwargs == [{"request_delay_seconds": 0.5, "max_retries": 3}]
+    assert collection_calls[0]["board_values"] == [
+        "https://apply.workable.com/acme",
+        "https://apply.workable.com/beta",
+    ]
+    assert collection_calls[0]["collection_date"] is None
+    assert collection_calls[0]["resume"] is True
+
+
+def test_collect_teamtailor_plain_text_file_dry_run(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    boards_path = tmp_path / "boards.txt"
+    boards_path.write_text(
+        "acme\nhttps://beta.teamtailor.com/jobs/123\n",
+        encoding="utf-8",
+    )
+
+    def fail_client(**_: Any) -> None:
+        raise AssertionError("dry run must not create a Teamtailor client")
+
+    monkeypatch.setattr(cli, "TeamtailorClient", fail_client)
+
+    result = runner.invoke(
+        cli.app,
+        ["collect-teamtailor", "--boards-file", str(boards_path), "--dry-run"],
+    )
+
+    assert result.exit_code == 0
+    assert "Normalized 2 Teamtailor board URL(s)." in result.output
+    assert "https://acme.teamtailor.com" in result.output
+    assert "https://beta.teamtailor.com" in result.output
+
+
+def test_collect_workable_combines_and_dedupes_explicit_inputs(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    boards_path = tmp_path / "boards.txt"
+    boards_path.write_text(
+        "https://apply.workable.com/ACME/jobs\nbeta\n",
+        encoding="utf-8",
+    )
+
+    def fail_client(**_: Any) -> None:
+        raise AssertionError("dry run must not create a Workable client")
+
+    monkeypatch.setattr(cli, "WorkableClient", fail_client)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "collect-workable",
+            "--board-url",
+            "acme",
+            "--board-url",
+            "gamma",
+            "--boards-file",
+            str(boards_path),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Normalized 3 Workable board URL(s)." in result.output
+    assert result.output.count("https://apply.workable.com/acme") == 1
+    assert result.output.index("https://apply.workable.com/acme") < result.output.index(
+        "https://apply.workable.com/gamma"
+    )
+    assert result.output.index("https://apply.workable.com/gamma") < result.output.index(
+        "https://apply.workable.com/beta"
+    )
+
+
+def test_collect_workable_empty_file_is_explicit_and_skips_discovery(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    boards_path = tmp_path / "empty.txt"
+    boards_path.write_text("", encoding="utf-8")
+
+    def fail_discovery(**_: Any) -> None:
+        raise AssertionError("an explicitly empty board file must not trigger discovery")
+
+    monkeypatch.setattr(cli, "_build_workable_discovery_queries", fail_discovery)
+
+    result = runner.invoke(
+        cli.app,
+        ["collect-workable", "--boards-file", str(boards_path), "--dry-run"],
+    )
+
+    assert result.exit_code == 0
+    assert "Normalized 0 Workable board URL(s)." in result.output
+
+
+@pytest.mark.parametrize("invalid_date", ["not-a-date", "20260702", "2026-W27-4"])
+def test_collect_workable_rejects_invalid_collection_date(invalid_date: str) -> None:
+    result = runner.invoke(
+        cli.app,
+        [
+            "collect-workable",
+            "--board-url",
+            "acme",
+            "--collection-date",
+            invalid_date,
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "Date must use YYYY-MM-DD format" in result.output
+
+
+def test_collect_workable_passes_resilience_options_and_reports_counts(
+    monkeypatch,
+) -> None:
+    client_kwargs: list[dict[str, Any]] = []
+    collection_calls: list[dict[str, Any]] = []
+
+    class FakeWorkableClient:
+        def __init__(self, **kwargs: Any) -> None:
+            client_kwargs.append(kwargs)
+
+        def close(self) -> None:
+            pass
+
+    def fake_collect(board_values: list[str], **kwargs: Any) -> SimpleNamespace:
+        collection_calls.append({"board_values": list(board_values), **kwargs})
+        return SimpleNamespace(
+            manifest_path=Path("manifest.json"),
+            board_count=3,
+            result_files=["written.json", "resumed.json"],
+            written_count=1,
+            resumed_count=1,
+            error_count=1,
+        )
+
+    monkeypatch.setattr(cli, "WorkableClient", FakeWorkableClient)
+    monkeypatch.setattr(cli, "collect_workable_boards", fake_collect)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "collect-workable",
+            "--board-url",
+            "acme",
+            "--collection-date",
+            "2026-07-02",
+            "--request-delay",
+            "1.25",
+            "--max-retries",
+            "5",
+            "--no-resume",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert client_kwargs == [{"request_delay_seconds": 1.25, "max_retries": 5}]
+    assert collection_calls[0]["board_values"] == [
+        "https://apply.workable.com/acme"
+    ]
+    assert collection_calls[0]["collection_date"] == "2026-07-02"
+    assert collection_calls[0]["resume"] is False
+    assert collection_calls[0]["client"].__class__ is FakeWorkableClient
+    normalized_output = " ".join(result.output.split())
+    assert (
+        "3 board(s), 2 result file(s) available, 1 written, 1 resumed, 1 error(s)."
+        in normalized_output
+    )
+
+
+def test_collect_workable_reports_board_file_errors(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    boards_path = tmp_path / "invalid.jsonl"
+    boards_path.write_text("not valid", encoding="utf-8")
+
+    def fail_read(_: Path) -> list[str]:
+        raise ValueError("invalid JSONL record")
+
+    monkeypatch.setattr(cli, "read_ats_board_file", fail_read)
+
+    result = runner.invoke(
+        cli.app,
+        ["collect-workable", "--boards-file", str(boards_path)],
+    )
+
+    assert result.exit_code == 1
+    assert "Could not read boards file: invalid JSONL record" in result.output
+
+
+def test_all_collect_commands_expose_resilience_options() -> None:
+    commands = (
+        "collect-ashby",
+        "collect-greenhouse",
+        "collect-lever",
+        "collect-personio",
+        "collect-recruitee",
+        "collect-teamtailor",
+        "collect-smartrecruiters",
+        "collect-workable",
+    )
+    options = (
+        "--boards-file",
+        "--collection-date",
+        "--resume",
+        "--no-resume",
+        "--request-delay",
+        "--max-retries",
+    )
+
+    for command in commands:
+        result = runner.invoke(cli.app, [command, "--help"])
+        assert result.exit_code == 0, result.output
+        for option in options:
+            assert option in result.output
+
+
+@pytest.mark.parametrize(
+    ("command", "client_name", "collector_name"),
+    [
+        ("collect-ashby", "AshbyClient", "collect_ashby_boards"),
+        ("collect-greenhouse", "GreenhouseClient", "collect_greenhouse_boards"),
+        ("collect-lever", "LeverClient", "collect_lever_boards"),
+        ("collect-personio", "PersonioClient", "collect_personio_boards"),
+        ("collect-recruitee", "RecruiteeClient", "collect_recruitee_boards"),
+        ("collect-teamtailor", "TeamtailorClient", "collect_teamtailor_boards"),
+        (
+            "collect-smartrecruiters",
+            "SmartRecruitersClient",
+            "collect_smartrecruiters_boards",
+        ),
+        ("collect-workable", "WorkableClient", "collect_workable_boards"),
+    ],
+)
+def test_all_collect_commands_pass_resilience_options(
+    monkeypatch,
+    command: str,
+    client_name: str,
+    collector_name: str,
+) -> None:
+    client_calls: list[dict[str, Any]] = []
+    collector_calls: list[dict[str, Any]] = []
+
+    class FakeClient:
+        def __init__(self, **kwargs: Any) -> None:
+            client_calls.append(kwargs)
+
+        def close(self) -> None:
+            pass
+
+    def fake_collect(board_values: list[str], **kwargs: Any) -> SimpleNamespace:
+        collector_calls.append({"board_values": list(board_values), **kwargs})
+        return SimpleNamespace(
+            manifest_path=Path("manifest.json"),
+            board_count=1,
+            result_files=["result.json"],
+            written_count=1,
+            resumed_count=0,
+            error_count=0,
+        )
+
+    monkeypatch.setattr(cli, client_name, FakeClient)
+    monkeypatch.setattr(cli, collector_name, fake_collect)
+    monkeypatch.setattr(
+        cli,
+        "require_serper_api_key",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("explicit board input must not access Serper")
+        ),
+    )
+
+    result = runner.invoke(
+        cli.app,
+        [
+            command,
+            "--board-url",
+            "acme",
+            "--collection-date",
+            "2026-07-02",
+            "--request-delay",
+            "0.25",
+            "--max-retries",
+            "2",
+            "--no-resume",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert client_calls[0]["request_delay_seconds"] == 0.25
+    assert client_calls[0]["max_retries"] == 2
+    assert collector_calls[0]["collection_date"] == "2026-07-02"
+    assert collector_calls[0]["resume"] is False
+    assert collector_calls[0]["board_values"]
+    assert "1 result file(s) available, 1 written, 0 resumed" in " ".join(
+        result.output.split()
+    )

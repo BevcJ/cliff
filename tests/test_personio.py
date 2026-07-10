@@ -207,7 +207,11 @@ def test_personio_client_gets_public_xml_endpoint() -> None:
 
     transport = httpx.MockTransport(handler)
     with httpx.Client(transport=transport) as http_client:
-        client = PersonioClient(http_client=http_client)
+        client = PersonioClient(
+            http_client=http_client,
+            request_delay_seconds=0,
+            max_retries=0,
+        )
         result = client.fetch_board("https://acme-ai.jobs.personio.com")
 
     assert len(requests) == 1
@@ -234,6 +238,8 @@ def test_collect_personio_boards_writes_raw_response_and_manifest(tmp_path) -> N
     )
 
     assert result.successful_count == 1
+    assert result.written_count == 1
+    assert result.resumed_count == 0
     assert result.board_count == 1
     assert result.error_count == 0
     raw_record = read_json(Path(result.result_files[0]))
@@ -251,7 +257,80 @@ def test_collect_personio_boards_writes_raw_response_and_manifest(tmp_path) -> N
         "matched_count": 2,
         "skipped_count": 2,
     }
-    assert read_json(result.manifest_path)["result_files"] == result.result_files
+    manifest = read_json(result.manifest_path)
+    assert manifest["result_files"] == result.result_files
+    assert manifest["written_files"] == result.written_files
+    assert manifest["resumed_files"] == result.resumed_files
+
+
+def test_collect_personio_boards_preserves_mixed_result_order_and_can_refetch(
+    tmp_path,
+) -> None:
+    existing_board = personio_board_from_slug("existing")
+    existing_path = write_raw_ats_response(
+        build_raw_personio_response_record(
+            board=existing_board,
+            response=_sample_personio_response(),
+            collected_at="2026-06-16T09:00:00Z",
+        ),
+        platform_company_slug=existing_board.platform_company_slug,
+        collection_date="2026-06-16",
+        data_dir=tmp_path,
+        platform="personio",
+    )
+    client = FakePersonioClient(_sample_personio_response())
+    timestamps = iter(
+        [
+            "2026-06-16T10:00:00Z",
+            "2026-06-16T10:00:01Z",
+            "2026-06-16T10:00:02Z",
+        ]
+    )
+
+    result = collect_personio_boards(
+        [existing_board.board_url, "new-company", existing_board.board_url],
+        client=client,  # type: ignore[arg-type]
+        data_dir=tmp_path,
+        clock=lambda: next(timestamps),
+    )
+
+    new_path = (
+        tmp_path
+        / "raw"
+        / "ats"
+        / "2026-06-16"
+        / "personio"
+        / "new-company.json"
+    )
+    assert client.fetched_boards == ["https://new-company.jobs.personio.com"]
+    assert result.result_files == [existing_path.as_posix(), new_path.as_posix()]
+    assert result.written_files == [new_path.as_posix()]
+    assert result.resumed_files == [existing_path.as_posix()]
+    manifest = read_json(result.manifest_path)
+    assert manifest["result_files"] == result.result_files
+    assert manifest["written_files"] == result.written_files
+    assert manifest["resumed_files"] == result.resumed_files
+
+    overwrite_client = FakePersonioClient(_sample_personio_response())
+    overwrite_timestamps = iter(
+        [
+            "2026-06-16T11:00:00Z",
+            "2026-06-16T11:00:01Z",
+            "2026-06-16T11:00:02Z",
+        ]
+    )
+    overwrite_result = collect_personio_boards(
+        [existing_board.board_url],
+        client=overwrite_client,  # type: ignore[arg-type]
+        data_dir=tmp_path,
+        clock=lambda: next(overwrite_timestamps),
+        resume=False,
+    )
+
+    assert overwrite_client.fetched_boards == [existing_board.board_url]
+    assert overwrite_result.result_files == [existing_path.as_posix()]
+    assert overwrite_result.written_files == [existing_path.as_posix()]
+    assert overwrite_result.resumed_files == []
 
 
 def test_normalize_raw_personio_file_keeps_title_ai_signals_only(tmp_path) -> None:

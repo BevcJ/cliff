@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
 
 from ai_hiring_radar.config import load_countries_config
 from ai_hiring_radar.normalize import normalize_raw_ats_file, process_collection
@@ -243,7 +244,12 @@ def test_smartrecruiters_client_fetches_paginated_public_postings_endpoint() -> 
 
     transport = httpx.MockTransport(handler)
     with httpx.Client(transport=transport) as http_client:
-        client = SmartRecruitersClient(http_client=http_client, page_limit=1)
+        client = SmartRecruitersClient(
+            http_client=http_client,
+            page_limit=1,
+            request_delay_seconds=0,
+            max_retries=0,
+        )
         result = client.fetch_board("https://careers.smartrecruiters.com/acme-ai")
 
     assert [str(request.url) for request in requests] == [
@@ -272,6 +278,10 @@ def test_collect_smartrecruiters_boards_writes_raw_response_and_manifest(tmp_pat
     )
 
     assert result.successful_count == 1
+    assert result.written_count == 1
+    assert result.resumed_count == 0
+    assert result.written_files == result.result_files
+    assert result.resumed_files == []
     assert result.board_count == 1
     assert result.error_count == 0
     raw_record = read_json(Path(result.result_files[0]))
@@ -293,7 +303,27 @@ def test_collect_smartrecruiters_boards_writes_raw_response_and_manifest(tmp_pat
         "skipped_count": 1,
     }
     assert raw_record["response"] == _sample_smartrecruiters_response()
-    assert read_json(result.manifest_path)["result_files"] == result.result_files
+    manifest = read_json(result.manifest_path)
+    assert manifest["result_files"] == result.result_files
+    assert manifest["written_files"] == result.written_files
+    assert manifest["resumed_files"] == result.resumed_files
+
+
+def test_collect_smartrecruiters_boards_validates_explicit_collection_date(
+    tmp_path,
+) -> None:
+    client = FakeSmartRecruitersClient(_sample_smartrecruiters_response())
+
+    with pytest.raises(ValueError):
+        collect_smartrecruiters_boards(
+            ["acme-ai"],
+            client=client,  # type: ignore[arg-type]
+            collection_date="",
+            data_dir=tmp_path,
+            clock=lambda: "2026-06-20T10:00:00Z",
+        )
+
+    assert client.fetched_boards == []
 
 
 def test_normalize_raw_smartrecruiters_file_keeps_title_ai_signals_only(tmp_path) -> None:
