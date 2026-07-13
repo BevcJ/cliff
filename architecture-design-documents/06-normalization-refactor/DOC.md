@@ -343,7 +343,7 @@ Conflict rule:
 | `common/xml.py` | XML local-name, child lookup, children lookup, and child text extraction. |
 | `common/html.py` | HTML-to-text cleanup currently needed by Teamtailor and future provider details. |
 
-Title filtering must remain provider-specific where behavior differs today. For example, Ashby, SmartRecruiters, Recruitee, Teamtailor, and Workable currently exclude AI-trainer titles, while Greenhouse, Lever, and Personio do not all apply that exact exclusion. Shared helpers must make this policy explicit per provider instead of silently changing it globally.
+Title filtering must preserve each provider's current policy. The current ATS providers use `is_ai_role_title_candidate(...)`, including its AI-trainer exclusion; future provider-specific deviations should be explicit in that provider normalizer instead of hidden inside shared helpers.
 
 ---
 
