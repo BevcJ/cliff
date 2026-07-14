@@ -20,6 +20,9 @@ uv run ai-hiring-radar collect-ashby --countries nl
 uv run ai-hiring-radar collect-ashby --countries nl --pages 3 --results-per-query 10
 uv run ai-hiring-radar collect-ashby --countries nl --discovery-depth broad
 uv run ai-hiring-radar collect-ashby --board-url https://jobs.ashbyhq.com/everai
+uv run ai-hiring-radar discover-greenhouse --countries nl --dry-run
+uv run ai-hiring-radar collect-greenhouse --countries nl
+uv run ai-hiring-radar collect-greenhouse --board-url https://boards.greenhouse.io/acme
 uv run ai-hiring-radar discover-lever --countries nl --dry-run
 uv run ai-hiring-radar collect-lever --countries nl
 uv run ai-hiring-radar collect-lever --board-url https://jobs.lever.co/insiderone
@@ -35,6 +38,9 @@ uv run ai-hiring-radar collect-workable --board-url https://apply.workable.com/w
 uv run ai-hiring-radar discover-teamtailor --countries nl --dry-run
 uv run ai-hiring-radar collect-teamtailor --countries nl
 uv run ai-hiring-radar collect-teamtailor --board-url https://career.teamtailor.com
+uv run ai-hiring-radar discover-smartrecruiters --countries nl --dry-run
+uv run ai-hiring-radar collect-smartrecruiters --countries nl
+uv run ai-hiring-radar collect-smartrecruiters --board-url https://careers.smartrecruiters.com/acme
 uv run ai-hiring-radar debug-ashby-discovery --sample 5 --json
 uv run ai-hiring-radar process --date YYYY-MM-DD
 uv run ai-hiring-radar extract-job-descriptions --date YYYY-MM-DD --dry-run
@@ -54,9 +60,9 @@ uv run ai-hiring-radar inspect --date YYYY-MM-DD
 
 ATS discovery commands use Serper Google Search to find public provider boards. Provider collection commands store raw, self-describing JSON wrappers under `data/raw/ats/YYYY-MM-DD/<provider>/`.
 
-Use `--location-depth cities` on ATS discovery and collection commands for deeper Netherlands-only coverage across configured city/location variants. Provider defaults use city-level discovery where supported.
+Use `--location-depth cities` on ATS discovery and collection commands for deeper coverage across configured city/location variants. Provider defaults use city-level discovery where supported.
 
-Processing reads raw ATS wrappers only, writes deduplicated candidates to `data/processed/job_candidates_YYYY-MM-DD.jsonl`, aggregates parseable companies to `data/processed/companies_YYYY-MM-DD.jsonl`, and exports review files under `data/exports/`. ATS candidates may include provider-supplied job descriptions, but AI role filtering remains based on job titles.
+Processing reads raw ATS wrappers only, writes deduplicated candidates to `data/processed/job_candidates_YYYY-MM-DD.jsonl`, and aggregates parseable companies to `data/processed/companies_YYYY-MM-DD.jsonl`. Run `export` separately to write review files under `data/exports/`. ATS candidates may include provider-supplied job descriptions, but AI role filtering remains based on job titles.
 
 Job description extraction is a separate step after `process`. It reads `data/processed/job_candidates_YYYY-MM-DD.jsonl`, calls a Pydantic AI structured-output extractor for candidates with useful ATS/job-description data, and writes compact records to `data/processed/job_description_extracts_YYYY-MM-DD.jsonl`. The extraction output includes model/prompt metadata and structured datapoints, but intentionally does not include full job description text, evidence snippets, raw LLM responses, or confidence scores. Progress is shown by default with `tqdm`; use `--no-progress` for quiet runs. Successful records are appended immediately, and reruns resume by skipping existing `job_id`s. Use `--countries nl,dk` to extract only jobs matching any selected country code before broadening to the full set later. Use `--restart` to clear existing extracts first. Use `--dry-run` to count processable candidates without model calls or output writes.
 
