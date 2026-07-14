@@ -9,7 +9,7 @@ uv sync --dev
 cp .env.example .env
 ```
 
-Set `SERPER_API_KEY` in `.env` before running collection-related commands. For job description extraction with Azure AI Foundry, set `JOB_DESCRIPTION_EXTRACTION_PROVIDER=azure`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT_NAME`, and `AZURE_OPENAI_API_KEY`. For company enrichment, set `COMPANY_ENRICHMENT_MODEL` to a web-search-capable Azure deployment such as `gpt-5.4-mini` and use the same Azure endpoint/key settings. For Postgres-backed inspection snapshots and shared review state, set `AI_HIRING_RADAR_DATABASE_URL` to the Supabase Postgres transaction-pooler connection string.
+Set `SERPER_API_KEY` in `.env` before running search collection or ATS commands that perform discovery. `ats collect PROVIDER` does not require Serper when explicit `--board-url` or `--boards-file` input is provided. For job description extraction with Azure AI Foundry, set `JOB_DESCRIPTION_EXTRACTION_PROVIDER=azure`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT_NAME`, and `AZURE_OPENAI_API_KEY`. For company enrichment, set `COMPANY_ENRICHMENT_MODEL` to a web-search-capable Azure deployment such as `gpt-5.4-mini` and use the same Azure endpoint/key settings. For Postgres-backed inspection snapshots and shared review state, set `AI_HIRING_RADAR_DATABASE_URL` to the Supabase Postgres transaction-pooler connection string.
 
 ## CLI
 
@@ -21,26 +21,31 @@ uv run ai-hiring-radar collect --countries nl --role "AI Product Manager"
 uv run ai-hiring-radar collect --countries nl,uk,dk --limit 10
 uv run ai-hiring-radar collect --countries nl --location-depth cities --dry-run
 uv run ai-hiring-radar collect --countries nl --location-depth cities --limit 20
-uv run ai-hiring-radar discover-ashby --countries nl --dry-run
-uv run ai-hiring-radar collect-ashby --countries nl
-uv run ai-hiring-radar collect-ashby --countries nl --pages 3 --results-per-query 10
-uv run ai-hiring-radar collect-ashby --countries nl --discovery-depth broad
-uv run ai-hiring-radar collect-ashby --board-url https://jobs.ashbyhq.com/everai
-uv run ai-hiring-radar discover-lever --countries nl --dry-run
-uv run ai-hiring-radar collect-lever --countries nl
-uv run ai-hiring-radar collect-lever --board-url https://jobs.lever.co/insiderone
-uv run ai-hiring-radar discover-personio --countries nl --dry-run
-uv run ai-hiring-radar collect-personio --countries nl
-uv run ai-hiring-radar collect-personio --board-url https://acme.jobs.personio.com
-uv run ai-hiring-radar discover-recruitee --countries nl --dry-run
-uv run ai-hiring-radar collect-recruitee --countries nl
-uv run ai-hiring-radar collect-recruitee --board-url https://acme.recruitee.com
-uv run ai-hiring-radar discover-workable --countries nl --dry-run
-uv run ai-hiring-radar collect-workable --countries nl
-uv run ai-hiring-radar collect-workable --board-url https://apply.workable.com/workmotion
-uv run ai-hiring-radar discover-teamtailor --countries nl --dry-run
-uv run ai-hiring-radar collect-teamtailor --countries nl
-uv run ai-hiring-radar collect-teamtailor --board-url https://career.teamtailor.com
+uv run ai-hiring-radar ats discover ashby --countries nl --dry-run
+uv run ai-hiring-radar ats collect ashby --countries nl
+uv run ai-hiring-radar ats collect ashby --countries nl --pages 3 --results-per-query 10
+uv run ai-hiring-radar ats collect ashby --countries nl --discovery-depth broad
+uv run ai-hiring-radar ats collect ashby --board-url https://jobs.ashbyhq.com/everai
+uv run ai-hiring-radar ats discover greenhouse --countries nl --dry-run
+uv run ai-hiring-radar ats collect greenhouse --board-url https://boards.greenhouse.io/acme
+uv run ai-hiring-radar ats discover lever --countries nl --dry-run
+uv run ai-hiring-radar ats collect lever --countries nl
+uv run ai-hiring-radar ats collect lever --board-url https://jobs.lever.co/insiderone
+uv run ai-hiring-radar ats discover personio --countries nl --dry-run
+uv run ai-hiring-radar ats collect personio --countries nl
+uv run ai-hiring-radar ats collect personio --board-url https://acme.jobs.personio.com
+uv run ai-hiring-radar ats collect personio --board-url acme --language de
+uv run ai-hiring-radar ats discover recruitee --countries nl --dry-run
+uv run ai-hiring-radar ats collect recruitee --countries nl
+uv run ai-hiring-radar ats collect recruitee --board-url https://acme.recruitee.com
+uv run ai-hiring-radar ats discover workable --countries nl --dry-run
+uv run ai-hiring-radar ats collect workable --countries nl
+uv run ai-hiring-radar ats collect workable --board-url https://apply.workable.com/workmotion
+uv run ai-hiring-radar ats discover teamtailor --countries nl --dry-run
+uv run ai-hiring-radar ats collect teamtailor --countries nl
+uv run ai-hiring-radar ats collect teamtailor --board-url https://career.teamtailor.com
+uv run ai-hiring-radar ats discover smartrecruiters --countries nl --dry-run
+uv run ai-hiring-radar ats collect smartrecruiters --board-url https://careers.smartrecruiters.com/acme
 uv run ai-hiring-radar debug-ashby-discovery --sample 5 --json
 uv run ai-hiring-radar process --date YYYY-MM-DD
 uv run ai-hiring-radar extract-job-descriptions --date YYYY-MM-DD --dry-run
@@ -81,7 +86,7 @@ Lever collection uses the same discovery flow against `site:jobs.lever.co`, then
 
 Recruitee collection uses the same discovery flow against `site:*.recruitee.com`, then fetches public offers from `https://{company_slug}.recruitee.com/api/offers/` plus per-offer details from `/api/offers/{offer_id}` for job descriptions when available. Raw board responses are stored under `data/raw/ats/YYYY-MM-DD/recruitee/` and are included by `process` before dedupe and company aggregation.
 
-Personio collection uses the same discovery flow against `site:*.jobs.personio.com`, then fetches the public XML feed from `https://{company_slug}.jobs.personio.com/xml?language=en`. Raw XML is stored in JSON wrappers under `data/raw/ats/YYYY-MM-DD/personio/` and is included by `process` before dedupe and company aggregation.
+Personio collection uses the same discovery flow against `site:*.jobs.personio.com`, then fetches the public XML feed from `https://{company_slug}.jobs.personio.com/xml?language={language}`. The optional `--language` setting defaults to `en`; other ATS providers accept but ignore it. Raw XML is stored in JSON wrappers under `data/raw/ats/YYYY-MM-DD/personio/` and is included by `process` before dedupe and company aggregation.
 
 Workable collection uses the same discovery flow against `site:apply.workable.com`, then fetches public hosted-careers JSON from `https://apply.workable.com/api/v3/accounts/{company_slug}/jobs` and per-job details from `https://apply.workable.com/api/v2/accounts/{company_slug}/jobs/{shortcode}`. Raw listing and detail responses are stored under `data/raw/ats/YYYY-MM-DD/workable/` and are included by `process` before dedupe and company aggregation.
 

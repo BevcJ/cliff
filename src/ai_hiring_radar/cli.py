@@ -41,100 +41,24 @@ from ai_hiring_radar.sources.collection_resilience import (
     DEFAULT_REQUEST_DELAY_SECONDS,
     read_ats_board_file,
 )
-from ai_hiring_radar.sources.ashby import (
-    AshbyClient,
-    AshbyDiscoveryDepth,
-    DEFAULT_ASHBY_DISCOVERY_PAGES,
-    DEFAULT_ASHBY_DISCOVERY_RESULTS_PER_QUERY,
-    MAX_ASHBY_DISCOVERY_RESULTS_PER_QUERY,
-    collect_ashby_boards,
-    discover_ashby_boards,
-    generate_ashby_discovery_queries,
-    normalize_ashby_board,
+from ai_hiring_radar.sources.ats_discovery import (
+    AtsDiscoveryDepth,
+    AtsDiscoveryQuery,
+    AtsDiscoveryResult,
 )
-from ai_hiring_radar.sources.greenhouse import (
-    DEFAULT_GREENHOUSE_DISCOVERY_PAGES,
-    DEFAULT_GREENHOUSE_DISCOVERY_RESULTS_PER_QUERY,
-    GreenhouseClient,
-    GreenhouseDiscoveryDepth,
-    MAX_GREENHOUSE_DISCOVERY_RESULTS_PER_QUERY,
-    collect_greenhouse_boards,
-    discover_greenhouse_boards,
-    generate_greenhouse_discovery_queries,
-    normalize_greenhouse_board,
-)
-from ai_hiring_radar.sources.lever import (
-    DEFAULT_LEVER_DISCOVERY_PAGES,
-    DEFAULT_LEVER_DISCOVERY_RESULTS_PER_QUERY,
-    LeverClient,
-    LeverDiscoveryDepth,
-    MAX_LEVER_DISCOVERY_RESULTS_PER_QUERY,
-    collect_lever_boards,
-    discover_lever_boards,
-    generate_lever_discovery_queries,
-    normalize_lever_board,
-)
-from ai_hiring_radar.sources.personio import (
-    DEFAULT_PERSONIO_DISCOVERY_PAGES,
-    DEFAULT_PERSONIO_DISCOVERY_RESULTS_PER_QUERY,
-    DEFAULT_PERSONIO_LANGUAGE,
-    MAX_PERSONIO_DISCOVERY_RESULTS_PER_QUERY,
-    PersonioClient,
-    PersonioDiscoveryDepth,
-    collect_personio_boards,
-    discover_personio_boards,
-    generate_personio_discovery_queries,
-    normalize_personio_board,
-)
-from ai_hiring_radar.sources.recruitee import (
-    DEFAULT_RECRUITEE_DISCOVERY_PAGES,
-    DEFAULT_RECRUITEE_DISCOVERY_RESULTS_PER_QUERY,
-    MAX_RECRUITEE_DISCOVERY_RESULTS_PER_QUERY,
-    RecruiteeClient,
-    RecruiteeDiscoveryDepth,
-    collect_recruitee_boards,
-    discover_recruitee_boards,
-    generate_recruitee_discovery_queries,
-    normalize_recruitee_board,
-)
-from ai_hiring_radar.sources.teamtailor import (
-    DEFAULT_TEAMTAILOR_DISCOVERY_PAGES,
-    DEFAULT_TEAMTAILOR_DISCOVERY_RESULTS_PER_QUERY,
-    MAX_TEAMTAILOR_DISCOVERY_RESULTS_PER_QUERY,
-    TeamtailorClient,
-    TeamtailorDiscoveryDepth,
-    collect_teamtailor_boards,
-    discover_teamtailor_boards,
-    generate_teamtailor_discovery_queries,
-    normalize_teamtailor_board,
-)
-from ai_hiring_radar.sources.smartrecruiters import (
-    DEFAULT_SMARTRECRUITERS_DISCOVERY_PAGES,
-    DEFAULT_SMARTRECRUITERS_DISCOVERY_RESULTS_PER_QUERY,
-    MAX_SMARTRECRUITERS_DISCOVERY_RESULTS_PER_QUERY,
-    SmartRecruitersClient,
-    SmartRecruitersDiscoveryDepth,
-    collect_smartrecruiters_boards,
-    discover_smartrecruiters_boards,
-    generate_smartrecruiters_discovery_queries,
-    normalize_smartrecruiters_board,
-)
-from ai_hiring_radar.sources.workable import (
-    DEFAULT_WORKABLE_DISCOVERY_PAGES,
-    DEFAULT_WORKABLE_DISCOVERY_RESULTS_PER_QUERY,
-    MAX_WORKABLE_DISCOVERY_RESULTS_PER_QUERY,
-    WorkableClient,
-    WorkableDiscoveryDepth,
-    collect_workable_boards,
-    discover_workable_boards,
-    generate_workable_discovery_queries,
-    normalize_workable_board,
+from ai_hiring_radar.sources.ats_providers import (
+    AtsClientOptions,
+    AtsProvider,
+    AtsProviderSpec,
+    get_ats_provider_spec,
 )
 from ai_hiring_radar.sources.serper_google import SerperGoogleClient, collect_searches
 from ai_hiring_radar.storage_json import DEFAULT_DATA_DIR, ats_discovery_dir, read_json
 
 
 app = typer.Typer(help="European AI hiring radar MVP.")
+ats_app = typer.Typer(help="Discover and collect public ATS job boards.")
+app.add_typer(ats_app, name="ats")
 console = Console()
 
 
@@ -217,9 +141,9 @@ def _parse_location_depth(value: str) -> LocationDepth:
         raise typer.BadParameter("Location depth must be 'country' or 'cities'.") from exc
 
 
-def _parse_ats_discovery_depth(value: str) -> AshbyDiscoveryDepth:
+def _parse_ats_discovery_depth(value: str) -> AtsDiscoveryDepth:
     try:
-        return AshbyDiscoveryDepth(value.strip().lower())
+        return AtsDiscoveryDepth(value.strip().lower())
     except ValueError as exc:
         raise typer.BadParameter(
             "ATS discovery depth must be 'standard', 'broad', or 'exhaustive'."
@@ -292,40 +216,6 @@ def _print_dry_run_queries(search_queries: list[SearchQuery]) -> None:
         )
 
 
-def _build_ashby_discovery_queries(
-    *,
-    country_codes: list[str],
-    limit: int | None = None,
-    location_depth: LocationDepth = LocationDepth.CITIES,
-    discovery_depth: AshbyDiscoveryDepth = AshbyDiscoveryDepth.EXHAUSTIVE,
-    results_per_query: int = DEFAULT_ASHBY_DISCOVERY_RESULTS_PER_QUERY,
-    pages: int = DEFAULT_ASHBY_DISCOVERY_PAGES,
-):
-    return generate_ashby_discovery_queries(
-        countries_config=load_countries_config(),
-        country_codes=country_codes,
-        limit=limit,
-        num=results_per_query,
-        pages=pages,
-        location_depth=location_depth,
-        discovery_depth=discovery_depth,
-        role_terms=load_taxonomy_config().all_roles,
-    )
-
-
-def _print_ashby_discovery_queries(search_queries) -> None:  # noqa: ANN001
-    console.print(f"Generated {len(search_queries)} Ashby discovery queries.")
-    for index, search_query in enumerate(search_queries, start=1):
-        console.print(
-            f"{index}. "
-            f"[{search_query.country_code}/{search_query.search_location_label}] "
-            f"{search_query.discovery_query_type} "
-            f"page={search_query.page} "
-            f"{search_query.search_query}",
-            markup=False,
-        )
-
-
 def _latest_ashby_discovery_manifest_path():  # noqa: ANN201
     root = DEFAULT_DATA_DIR / "raw" / "ats_discovery"
     if not root.exists():
@@ -343,16 +233,37 @@ def _ashby_discovery_manifest_path(date_value: str | None):  # noqa: ANN201
     return ats_discovery_dir(_parse_iso_date(date_value), platform="ashby") / "manifest.json"
 
 
-def _build_greenhouse_discovery_queries(
+def _resolve_ats_discovery_options(
+    spec: AtsProviderSpec,
+    *,
+    results_per_query: int | None,
+    pages: int | None,
+) -> tuple[int, int]:
+    resolved_results = (
+        spec.default_results_per_query
+        if results_per_query is None
+        else results_per_query
+    )
+    if resolved_results > spec.max_results_per_query:
+        raise typer.BadParameter(
+            f"{spec.display_name} accepts at most "
+            f"{spec.max_results_per_query} results per query.",
+            param_hint="--results-per-query",
+        )
+    return resolved_results, spec.default_pages if pages is None else pages
+
+
+def _build_ats_discovery_queries(
+    spec: AtsProviderSpec,
     *,
     country_codes: list[str],
-    limit: int | None = None,
-    location_depth: LocationDepth = LocationDepth.CITIES,
-    discovery_depth: GreenhouseDiscoveryDepth = GreenhouseDiscoveryDepth.EXHAUSTIVE,
-    results_per_query: int = DEFAULT_GREENHOUSE_DISCOVERY_RESULTS_PER_QUERY,
-    pages: int = DEFAULT_GREENHOUSE_DISCOVERY_PAGES,
-):
-    return generate_greenhouse_discovery_queries(
+    limit: int | None,
+    location_depth: LocationDepth,
+    discovery_depth: AtsDiscoveryDepth,
+    results_per_query: int,
+    pages: int,
+) -> list[AtsDiscoveryQuery]:
+    return spec.generate_discovery_queries(
         countries_config=load_countries_config(),
         country_codes=country_codes,
         limit=limit,
@@ -364,42 +275,13 @@ def _build_greenhouse_discovery_queries(
     )
 
 
-def _print_greenhouse_discovery_queries(search_queries) -> None:  # noqa: ANN001
-    console.print(f"Generated {len(search_queries)} Greenhouse discovery queries.")
-    for index, search_query in enumerate(search_queries, start=1):
-        console.print(
-            f"{index}. "
-            f"[{search_query.country_code}/{search_query.search_location_label}] "
-            f"{search_query.discovery_query_type} "
-            f"page={search_query.page} "
-            f"{search_query.search_query}",
-            markup=False,
-        )
-
-
-def _build_lever_discovery_queries(
-    *,
-    country_codes: list[str],
-    limit: int | None = None,
-    location_depth: LocationDepth = LocationDepth.CITIES,
-    discovery_depth: LeverDiscoveryDepth = LeverDiscoveryDepth.EXHAUSTIVE,
-    results_per_query: int = DEFAULT_LEVER_DISCOVERY_RESULTS_PER_QUERY,
-    pages: int = DEFAULT_LEVER_DISCOVERY_PAGES,
-):
-    return generate_lever_discovery_queries(
-        countries_config=load_countries_config(),
-        country_codes=country_codes,
-        limit=limit,
-        num=results_per_query,
-        pages=pages,
-        location_depth=location_depth,
-        discovery_depth=discovery_depth,
-        role_terms=load_taxonomy_config().all_roles,
+def _print_ats_discovery_queries(
+    spec: AtsProviderSpec,
+    search_queries: list[AtsDiscoveryQuery],
+) -> None:
+    console.print(
+        f"Generated {len(search_queries)} {spec.display_name} discovery queries."
     )
-
-
-def _print_lever_discovery_queries(search_queries) -> None:  # noqa: ANN001
-    console.print(f"Generated {len(search_queries)} Lever discovery queries.")
     for index, search_query in enumerate(search_queries, start=1):
         console.print(
             f"{index}. "
@@ -411,174 +293,31 @@ def _print_lever_discovery_queries(search_queries) -> None:  # noqa: ANN001
         )
 
 
-def _build_personio_discovery_queries(
-    *,
-    country_codes: list[str],
-    limit: int | None = None,
-    location_depth: LocationDepth = LocationDepth.CITIES,
-    discovery_depth: PersonioDiscoveryDepth = PersonioDiscoveryDepth.EXHAUSTIVE,
-    results_per_query: int = DEFAULT_PERSONIO_DISCOVERY_RESULTS_PER_QUERY,
-    pages: int = DEFAULT_PERSONIO_DISCOVERY_PAGES,
-):
-    return generate_personio_discovery_queries(
-        countries_config=load_countries_config(),
-        country_codes=country_codes,
-        limit=limit,
-        num=results_per_query,
-        pages=pages,
-        location_depth=location_depth,
-        discovery_depth=discovery_depth,
-        role_terms=load_taxonomy_config().all_roles,
+def _run_ats_discovery(
+    spec: AtsProviderSpec,
+    discovery_queries: list[AtsDiscoveryQuery],
+) -> AtsDiscoveryResult:
+    try:
+        api_key = require_serper_api_key()
+    except RuntimeError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    client = SerperGoogleClient(api_key=api_key)
+    try:
+        result = spec.discover_boards(discovery_queries, client=client)
+    finally:
+        client.close()
+
+    console.print(
+        f"{spec.display_name} discovery complete: "
+        f"{result.board_count} board(s), "
+        f"{result.query_count} querie(s), "
+        f"{result.error_count} error(s)."
     )
-
-
-def _print_personio_discovery_queries(search_queries) -> None:  # noqa: ANN001
-    console.print(f"Generated {len(search_queries)} Personio discovery queries.")
-    for index, search_query in enumerate(search_queries, start=1):
-        console.print(
-            f"{index}. "
-            f"[{search_query.country_code}/{search_query.search_location_label}] "
-            f"{search_query.discovery_query_type} "
-            f"page={search_query.page} "
-            f"{search_query.search_query}",
-            markup=False,
-        )
-
-
-def _build_recruitee_discovery_queries(
-    *,
-    country_codes: list[str],
-    limit: int | None = None,
-    location_depth: LocationDepth = LocationDepth.CITIES,
-    discovery_depth: RecruiteeDiscoveryDepth = RecruiteeDiscoveryDepth.EXHAUSTIVE,
-    results_per_query: int = DEFAULT_RECRUITEE_DISCOVERY_RESULTS_PER_QUERY,
-    pages: int = DEFAULT_RECRUITEE_DISCOVERY_PAGES,
-):
-    return generate_recruitee_discovery_queries(
-        countries_config=load_countries_config(),
-        country_codes=country_codes,
-        limit=limit,
-        num=results_per_query,
-        pages=pages,
-        location_depth=location_depth,
-        discovery_depth=discovery_depth,
-        role_terms=load_taxonomy_config().all_roles,
-    )
-
-
-def _print_recruitee_discovery_queries(search_queries) -> None:  # noqa: ANN001
-    console.print(f"Generated {len(search_queries)} Recruitee discovery queries.")
-    for index, search_query in enumerate(search_queries, start=1):
-        console.print(
-            f"{index}. "
-            f"[{search_query.country_code}/{search_query.search_location_label}] "
-            f"{search_query.discovery_query_type} "
-            f"page={search_query.page} "
-            f"{search_query.search_query}",
-            markup=False,
-        )
-
-
-def _build_teamtailor_discovery_queries(
-    *,
-    country_codes: list[str],
-    limit: int | None = None,
-    location_depth: LocationDepth = LocationDepth.CITIES,
-    discovery_depth: TeamtailorDiscoveryDepth = TeamtailorDiscoveryDepth.EXHAUSTIVE,
-    results_per_query: int = DEFAULT_TEAMTAILOR_DISCOVERY_RESULTS_PER_QUERY,
-    pages: int = DEFAULT_TEAMTAILOR_DISCOVERY_PAGES,
-):
-    return generate_teamtailor_discovery_queries(
-        countries_config=load_countries_config(),
-        country_codes=country_codes,
-        limit=limit,
-        num=results_per_query,
-        pages=pages,
-        location_depth=location_depth,
-        discovery_depth=discovery_depth,
-        role_terms=load_taxonomy_config().all_roles,
-    )
-
-
-def _print_teamtailor_discovery_queries(search_queries) -> None:  # noqa: ANN001
-    console.print(f"Generated {len(search_queries)} Teamtailor discovery queries.")
-    for index, search_query in enumerate(search_queries, start=1):
-        console.print(
-            f"{index}. "
-            f"[{search_query.country_code}/{search_query.search_location_label}] "
-            f"{search_query.discovery_query_type} "
-            f"page={search_query.page} "
-            f"{search_query.search_query}",
-            markup=False,
-        )
-
-
-def _build_smartrecruiters_discovery_queries(
-    *,
-    country_codes: list[str],
-    limit: int | None = None,
-    location_depth: LocationDepth = LocationDepth.CITIES,
-    discovery_depth: SmartRecruitersDiscoveryDepth = SmartRecruitersDiscoveryDepth.EXHAUSTIVE,
-    results_per_query: int = DEFAULT_SMARTRECRUITERS_DISCOVERY_RESULTS_PER_QUERY,
-    pages: int = DEFAULT_SMARTRECRUITERS_DISCOVERY_PAGES,
-):
-    return generate_smartrecruiters_discovery_queries(
-        countries_config=load_countries_config(),
-        country_codes=country_codes,
-        limit=limit,
-        num=results_per_query,
-        pages=pages,
-        location_depth=location_depth,
-        discovery_depth=discovery_depth,
-        role_terms=load_taxonomy_config().all_roles,
-    )
-
-
-def _print_smartrecruiters_discovery_queries(search_queries) -> None:  # noqa: ANN001
-    console.print(f"Generated {len(search_queries)} SmartRecruiters discovery queries.")
-    for index, search_query in enumerate(search_queries, start=1):
-        console.print(
-            f"{index}. "
-            f"[{search_query.country_code}/{search_query.search_location_label}] "
-            f"{search_query.discovery_query_type} "
-            f"page={search_query.page} "
-            f"{search_query.search_query}",
-            markup=False,
-        )
-
-
-def _build_workable_discovery_queries(
-    *,
-    country_codes: list[str],
-    limit: int | None = None,
-    location_depth: LocationDepth = LocationDepth.CITIES,
-    discovery_depth: WorkableDiscoveryDepth = WorkableDiscoveryDepth.EXHAUSTIVE,
-    results_per_query: int = DEFAULT_WORKABLE_DISCOVERY_RESULTS_PER_QUERY,
-    pages: int = DEFAULT_WORKABLE_DISCOVERY_PAGES,
-):
-    return generate_workable_discovery_queries(
-        countries_config=load_countries_config(),
-        country_codes=country_codes,
-        limit=limit,
-        num=results_per_query,
-        pages=pages,
-        location_depth=location_depth,
-        discovery_depth=discovery_depth,
-        role_terms=load_taxonomy_config().all_roles,
-    )
-
-
-def _print_workable_discovery_queries(search_queries) -> None:  # noqa: ANN001
-    console.print(f"Generated {len(search_queries)} Workable discovery queries.")
-    for index, search_query in enumerate(search_queries, start=1):
-        console.print(
-            f"{index}. "
-            f"[{search_query.country_code}/{search_query.search_location_label}] "
-            f"{search_query.discovery_query_type} "
-            f"page={search_query.page} "
-            f"{search_query.search_query}",
-            markup=False,
-        )
+    console.print(f"Boards: {result.boards_path.as_posix()}")
+    console.print(f"Manifest: {result.manifest_path.as_posix()}")
+    return result
 
 
 @app.command()
@@ -654,13 +393,17 @@ def collect(
     console.print(f"Manifest: {result.manifest_path.as_posix()}")
 
 
-@app.command("discover-ashby")
-def discover_ashby(
+@ats_app.command("discover")
+def ats_discover(
+    provider: Annotated[
+        AtsProvider,
+        typer.Argument(help="ATS provider to discover."),
+    ],
     countries: Annotated[
         str,
         typer.Option(
             "--countries",
-            help="Comma-separated country codes for Ashby board discovery.",
+            help="Comma-separated country codes for ATS board discovery.",
         ),
     ] = "nl,uk,dk",
     limit: Annotated[
@@ -675,7 +418,7 @@ def discover_ashby(
         bool,
         typer.Option(
             "--dry-run",
-            help="Print generated Ashby discovery queries without calling Serper.",
+            help="Print generated discovery queries without calling Serper.",
         ),
     ] = False,
     location_depth: Annotated[
@@ -689,80 +432,67 @@ def discover_ashby(
         str,
         typer.Option(
             "--discovery-depth",
-            help="Ashby discovery depth: standard, broad, or exhaustive.",
+            help="ATS discovery depth: standard, broad, or exhaustive.",
         ),
-    ] = AshbyDiscoveryDepth.EXHAUSTIVE.value,
+    ] = AtsDiscoveryDepth.EXHAUSTIVE.value,
     results_per_query: Annotated[
-        int,
+        int | None,
         typer.Option(
             "--results-per-query",
             min=1,
-            max=MAX_ASHBY_DISCOVERY_RESULTS_PER_QUERY,
-            help="Serper results requested per Ashby discovery query.",
+            help=(
+                "Serper results requested per discovery query. "
+                "Defaults to the selected provider setting (currently 10)."
+            ),
         ),
-    ] = DEFAULT_ASHBY_DISCOVERY_RESULTS_PER_QUERY,
+    ] = None,
     pages: Annotated[
-        int,
+        int | None,
         typer.Option(
             "--pages",
             min=1,
-            help="Serper result pages requested per Ashby discovery query.",
+            help=(
+                "Serper result pages requested per discovery query. "
+                "Defaults to the selected provider setting (currently 2)."
+            ),
         ),
-    ] = DEFAULT_ASHBY_DISCOVERY_PAGES,
+    ] = None,
 ) -> None:
-    """Discover public Ashby board URLs through search-index queries."""
-    country_codes = _parse_country_codes(countries)
-    parsed_location_depth = _parse_location_depth(location_depth)
-    parsed_discovery_depth = _parse_ats_discovery_depth(discovery_depth)
-    discovery_queries = _build_ashby_discovery_queries(
-        country_codes=country_codes,
-        limit=limit,
-        location_depth=parsed_location_depth,
-        discovery_depth=parsed_discovery_depth,
+    """Discover public ATS board URLs through search-index queries."""
+    spec = get_ats_provider_spec(provider)
+    resolved_results, resolved_pages = _resolve_ats_discovery_options(
+        spec,
         results_per_query=results_per_query,
         pages=pages,
     )
+    discovery_queries = _build_ats_discovery_queries(
+        spec,
+        country_codes=_parse_country_codes(countries),
+        limit=limit,
+        location_depth=_parse_location_depth(location_depth),
+        discovery_depth=_parse_ats_discovery_depth(discovery_depth),
+        results_per_query=resolved_results,
+        pages=resolved_pages,
+    )
 
     if dry_run:
-        _print_ashby_discovery_queries(discovery_queries)
+        _print_ats_discovery_queries(spec, discovery_queries)
         return
 
-    try:
-        api_key = require_serper_api_key()
-    except RuntimeError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
-
-    client = SerperGoogleClient(api_key=api_key)
-    try:
-        result = discover_ashby_boards(discovery_queries, client=client)
-    finally:
-        client.close()
-
-    console.print(
-        "Ashby discovery complete: "
-        f"{result.board_count} board(s), "
-        f"{result.query_count} querie(s), "
-        f"{result.error_count} error(s)."
-    )
-    console.print(f"Boards: {result.boards_path.as_posix()}")
-    console.print(f"Manifest: {result.manifest_path.as_posix()}")
+    _run_ats_discovery(spec, discovery_queries)
 
 
-@app.command("collect-ashby")
-def collect_ashby(
-    countries: Annotated[
-        str,
-        typer.Option(
-            "--countries",
-            help="Comma-separated country codes for Ashby board discovery.",
-        ),
-    ] = "nl,uk,dk",
+@ats_app.command("collect")
+def ats_collect(
+    provider: Annotated[
+        AtsProvider,
+        typer.Argument(help="ATS provider to collect."),
+    ],
     board_url: Annotated[
         list[str] | None,
         typer.Option(
             "--board-url",
-            help="Ashby board URL or slug. Can be repeated to skip discovery.",
+            help="ATS board URL or identifier. Can be repeated to skip discovery.",
         ),
     ] = None,
     boards_file: Annotated[
@@ -773,850 +503,7 @@ def collect_ashby(
             file_okay=True,
             dir_okay=False,
             readable=True,
-            help="JSONL or plain-text file containing Ashby board values.",
-        ),
-    ] = None,
-    collection_date: Annotated[
-        str | None,
-        typer.Option("--collection-date", help="Collection date in YYYY-MM-DD format."),
-    ] = None,
-    resume: Annotated[
-        bool,
-        typer.Option(
-            "--resume/--no-resume",
-            help="Reuse successful board results already collected for this date.",
-        ),
-    ] = True,
-    request_delay_seconds: Annotated[
-        float,
-        typer.Option(
-            "--request-delay",
-            min=0,
-            help="Delay in seconds between provider requests.",
-        ),
-    ] = DEFAULT_REQUEST_DELAY_SECONDS,
-    max_retries: Annotated[
-        int,
-        typer.Option(
-            "--max-retries",
-            min=0,
-            help="Maximum retries for transient provider request failures.",
-        ),
-    ] = DEFAULT_MAX_RETRIES,
-    limit: Annotated[
-        int | None,
-        typer.Option(
-            "--limit",
-            min=1,
-            help="Limit the number of generated discovery queries.",
-        ),
-    ] = None,
-    dry_run: Annotated[
-        bool,
-        typer.Option(
-            "--dry-run",
-            help="Print discovery queries or board URLs without fetching Ashby.",
-        ),
-    ] = False,
-    location_depth: Annotated[
-        str,
-        typer.Option(
-            "--location-depth",
-            help="Search location depth: country or cities.",
-        ),
-    ] = LocationDepth.CITIES.value,
-    discovery_depth: Annotated[
-        str,
-        typer.Option(
-            "--discovery-depth",
-            help="Ashby discovery depth: standard, broad, or exhaustive.",
-        ),
-    ] = AshbyDiscoveryDepth.EXHAUSTIVE.value,
-    results_per_query: Annotated[
-        int,
-        typer.Option(
-            "--results-per-query",
-            min=1,
-            max=MAX_ASHBY_DISCOVERY_RESULTS_PER_QUERY,
-            help="Serper results requested per Ashby discovery query.",
-        ),
-    ] = DEFAULT_ASHBY_DISCOVERY_RESULTS_PER_QUERY,
-    pages: Annotated[
-        int,
-        typer.Option(
-            "--pages",
-            min=1,
-            help="Serper result pages requested per Ashby discovery query.",
-        ),
-    ] = DEFAULT_ASHBY_DISCOVERY_PAGES,
-) -> None:
-    """Discover Ashby boards and collect public ATS job data."""
-    parsed_collection_date = (
-        _parse_iso_date(collection_date) if collection_date is not None else None
-    )
-    explicit_input, board_values = _resolve_explicit_board_values(
-        board_url,
-        boards_file,
-        normalize_ashby_board,
-    )
-
-    if explicit_input:
-        if dry_run:
-            console.print(f"Normalized {len(board_values)} Ashby board URL(s).")
-            for value in board_values:
-                console.print(value, markup=False)
-            return
-    else:
-        country_codes = _parse_country_codes(countries)
-        parsed_location_depth = _parse_location_depth(location_depth)
-        parsed_discovery_depth = _parse_ats_discovery_depth(discovery_depth)
-        discovery_queries = _build_ashby_discovery_queries(
-            country_codes=country_codes,
-            limit=limit,
-            location_depth=parsed_location_depth,
-            discovery_depth=parsed_discovery_depth,
-            results_per_query=results_per_query,
-            pages=pages,
-        )
-
-        if dry_run:
-            _print_ashby_discovery_queries(discovery_queries)
-            return
-
-        try:
-            api_key = require_serper_api_key()
-        except RuntimeError as exc:
-            console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(code=1) from exc
-
-        search_client = SerperGoogleClient(api_key=api_key)
-        try:
-            discovery_result = discover_ashby_boards(
-                discovery_queries,
-                client=search_client,
-            )
-        finally:
-            search_client.close()
-
-        board_values = [str(record["board_url"]) for record in discovery_result.boards]
-        console.print(
-            "Ashby discovery complete: "
-            f"{discovery_result.board_count} board(s), "
-            f"{discovery_result.error_count} error(s)."
-        )
-        console.print(f"Boards: {discovery_result.boards_path.as_posix()}")
-
-    if not board_values:
-        console.print("No Ashby boards to collect.")
-        return
-
-    ashby_client = AshbyClient(
-        request_delay_seconds=request_delay_seconds,
-        max_retries=max_retries,
-    )
-    try:
-        result = collect_ashby_boards(
-            board_values,
-            client=ashby_client,
-            collection_date=parsed_collection_date,
-            resume=resume,
-        )
-    finally:
-        ashby_client.close()
-
-    console.print(
-        "Ashby collection complete: "
-        f"{result.board_count} board(s), "
-        f"{len(result.result_files)} result file(s) available, "
-        f"{result.written_count} written, "
-        f"{result.resumed_count} resumed, "
-        f"{result.error_count} error(s)."
-    )
-    console.print(f"Manifest: {result.manifest_path.as_posix()}")
-
-
-@app.command("discover-greenhouse")
-def discover_greenhouse(
-    countries: Annotated[
-        str,
-        typer.Option(
-            "--countries",
-            help="Comma-separated country codes for Greenhouse board discovery.",
-        ),
-    ] = "nl,uk,dk",
-    limit: Annotated[
-        int | None,
-        typer.Option(
-            "--limit",
-            min=1,
-            help="Limit the number of generated discovery queries.",
-        ),
-    ] = None,
-    dry_run: Annotated[
-        bool,
-        typer.Option(
-            "--dry-run",
-            help="Print generated Greenhouse discovery queries without calling Serper.",
-        ),
-    ] = False,
-    location_depth: Annotated[
-        str,
-        typer.Option(
-            "--location-depth",
-            help="Search location depth: country or cities.",
-        ),
-    ] = LocationDepth.CITIES.value,
-    discovery_depth: Annotated[
-        str,
-        typer.Option(
-            "--discovery-depth",
-            help="Greenhouse discovery depth: standard, broad, or exhaustive.",
-        ),
-    ] = GreenhouseDiscoveryDepth.EXHAUSTIVE.value,
-    results_per_query: Annotated[
-        int,
-        typer.Option(
-            "--results-per-query",
-            min=1,
-            max=MAX_GREENHOUSE_DISCOVERY_RESULTS_PER_QUERY,
-            help="Serper results requested per Greenhouse discovery query.",
-        ),
-    ] = DEFAULT_GREENHOUSE_DISCOVERY_RESULTS_PER_QUERY,
-    pages: Annotated[
-        int,
-        typer.Option(
-            "--pages",
-            min=1,
-            help="Serper result pages requested per Greenhouse discovery query.",
-        ),
-    ] = DEFAULT_GREENHOUSE_DISCOVERY_PAGES,
-) -> None:
-    """Discover public Greenhouse board URLs through search-index queries."""
-    country_codes = _parse_country_codes(countries)
-    parsed_location_depth = _parse_location_depth(location_depth)
-    parsed_discovery_depth = _parse_ats_discovery_depth(discovery_depth)
-    discovery_queries = _build_greenhouse_discovery_queries(
-        country_codes=country_codes,
-        limit=limit,
-        location_depth=parsed_location_depth,
-        discovery_depth=parsed_discovery_depth,
-        results_per_query=results_per_query,
-        pages=pages,
-    )
-
-    if dry_run:
-        _print_greenhouse_discovery_queries(discovery_queries)
-        return
-
-    try:
-        api_key = require_serper_api_key()
-    except RuntimeError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
-
-    client = SerperGoogleClient(api_key=api_key)
-    try:
-        result = discover_greenhouse_boards(discovery_queries, client=client)
-    finally:
-        client.close()
-
-    console.print(
-        "Greenhouse discovery complete: "
-        f"{result.board_count} board(s), "
-        f"{result.query_count} querie(s), "
-        f"{result.error_count} error(s)."
-    )
-    console.print(f"Boards: {result.boards_path.as_posix()}")
-    console.print(f"Manifest: {result.manifest_path.as_posix()}")
-
-
-@app.command("collect-greenhouse")
-def collect_greenhouse(
-    countries: Annotated[
-        str,
-        typer.Option(
-            "--countries",
-            help="Comma-separated country codes for Greenhouse board discovery.",
-        ),
-    ] = "nl,uk,dk",
-    board_url: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--board-url",
-            help="Greenhouse board URL or token. Can be repeated to skip discovery.",
-        ),
-    ] = None,
-    boards_file: Annotated[
-        Path | None,
-        typer.Option(
-            "--boards-file",
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-            help="JSONL or plain-text file containing Greenhouse board values.",
-        ),
-    ] = None,
-    collection_date: Annotated[
-        str | None,
-        typer.Option("--collection-date", help="Collection date in YYYY-MM-DD format."),
-    ] = None,
-    resume: Annotated[
-        bool,
-        typer.Option(
-            "--resume/--no-resume",
-            help="Reuse successful board results already collected for this date.",
-        ),
-    ] = True,
-    request_delay_seconds: Annotated[
-        float,
-        typer.Option(
-            "--request-delay",
-            min=0,
-            help="Delay in seconds between provider requests.",
-        ),
-    ] = DEFAULT_REQUEST_DELAY_SECONDS,
-    max_retries: Annotated[
-        int,
-        typer.Option(
-            "--max-retries",
-            min=0,
-            help="Maximum retries for transient provider request failures.",
-        ),
-    ] = DEFAULT_MAX_RETRIES,
-    limit: Annotated[
-        int | None,
-        typer.Option(
-            "--limit",
-            min=1,
-            help="Limit the number of generated discovery queries.",
-        ),
-    ] = None,
-    dry_run: Annotated[
-        bool,
-        typer.Option(
-            "--dry-run",
-            help="Print discovery queries or board URLs without fetching Greenhouse.",
-        ),
-    ] = False,
-    location_depth: Annotated[
-        str,
-        typer.Option(
-            "--location-depth",
-            help="Search location depth: country or cities.",
-        ),
-    ] = LocationDepth.CITIES.value,
-    discovery_depth: Annotated[
-        str,
-        typer.Option(
-            "--discovery-depth",
-            help="Greenhouse discovery depth: standard, broad, or exhaustive.",
-        ),
-    ] = GreenhouseDiscoveryDepth.EXHAUSTIVE.value,
-    results_per_query: Annotated[
-        int,
-        typer.Option(
-            "--results-per-query",
-            min=1,
-            max=MAX_GREENHOUSE_DISCOVERY_RESULTS_PER_QUERY,
-            help="Serper results requested per Greenhouse discovery query.",
-        ),
-    ] = DEFAULT_GREENHOUSE_DISCOVERY_RESULTS_PER_QUERY,
-    pages: Annotated[
-        int,
-        typer.Option(
-            "--pages",
-            min=1,
-            help="Serper result pages requested per Greenhouse discovery query.",
-        ),
-    ] = DEFAULT_GREENHOUSE_DISCOVERY_PAGES,
-) -> None:
-    """Discover Greenhouse boards and collect public ATS job data."""
-    parsed_collection_date = (
-        _parse_iso_date(collection_date) if collection_date is not None else None
-    )
-    explicit_input, board_values = _resolve_explicit_board_values(
-        board_url,
-        boards_file,
-        normalize_greenhouse_board,
-    )
-
-    if explicit_input:
-        if dry_run:
-            console.print(f"Normalized {len(board_values)} Greenhouse board URL(s).")
-            for value in board_values:
-                console.print(value, markup=False)
-            return
-    else:
-        country_codes = _parse_country_codes(countries)
-        parsed_location_depth = _parse_location_depth(location_depth)
-        parsed_discovery_depth = _parse_ats_discovery_depth(discovery_depth)
-        discovery_queries = _build_greenhouse_discovery_queries(
-            country_codes=country_codes,
-            limit=limit,
-            location_depth=parsed_location_depth,
-            discovery_depth=parsed_discovery_depth,
-            results_per_query=results_per_query,
-            pages=pages,
-        )
-
-        if dry_run:
-            _print_greenhouse_discovery_queries(discovery_queries)
-            return
-
-        try:
-            api_key = require_serper_api_key()
-        except RuntimeError as exc:
-            console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(code=1) from exc
-
-        search_client = SerperGoogleClient(api_key=api_key)
-        try:
-            discovery_result = discover_greenhouse_boards(
-                discovery_queries,
-                client=search_client,
-            )
-        finally:
-            search_client.close()
-
-        board_values = [str(record["board_url"]) for record in discovery_result.boards]
-        console.print(
-            "Greenhouse discovery complete: "
-            f"{discovery_result.board_count} board(s), "
-            f"{discovery_result.error_count} error(s)."
-        )
-        console.print(f"Boards: {discovery_result.boards_path.as_posix()}")
-
-    if not board_values:
-        console.print("No Greenhouse boards to collect.")
-        return
-
-    greenhouse_client = GreenhouseClient(
-        request_delay_seconds=request_delay_seconds,
-        max_retries=max_retries,
-    )
-    try:
-        result = collect_greenhouse_boards(
-            board_values,
-            client=greenhouse_client,
-            collection_date=parsed_collection_date,
-            resume=resume,
-        )
-    finally:
-        greenhouse_client.close()
-
-    console.print(
-        "Greenhouse collection complete: "
-        f"{result.board_count} board(s), "
-        f"{len(result.result_files)} result file(s) available, "
-        f"{result.written_count} written, "
-        f"{result.resumed_count} resumed, "
-        f"{result.error_count} error(s)."
-    )
-    console.print(f"Manifest: {result.manifest_path.as_posix()}")
-
-
-@app.command("discover-lever")
-def discover_lever(
-    countries: Annotated[
-        str,
-        typer.Option(
-            "--countries",
-            help="Comma-separated country codes for Lever board discovery.",
-        ),
-    ] = "nl,uk,dk",
-    limit: Annotated[
-        int | None,
-        typer.Option(
-            "--limit",
-            min=1,
-            help="Limit the number of generated discovery queries.",
-        ),
-    ] = None,
-    dry_run: Annotated[
-        bool,
-        typer.Option(
-            "--dry-run",
-            help="Print generated Lever discovery queries without calling Serper.",
-        ),
-    ] = False,
-    location_depth: Annotated[
-        str,
-        typer.Option(
-            "--location-depth",
-            help="Search location depth: country or cities.",
-        ),
-    ] = LocationDepth.CITIES.value,
-    discovery_depth: Annotated[
-        str,
-        typer.Option(
-            "--discovery-depth",
-            help="Lever discovery depth: standard, broad, or exhaustive.",
-        ),
-    ] = LeverDiscoveryDepth.EXHAUSTIVE.value,
-    results_per_query: Annotated[
-        int,
-        typer.Option(
-            "--results-per-query",
-            min=1,
-            max=MAX_LEVER_DISCOVERY_RESULTS_PER_QUERY,
-            help="Serper results requested per Lever discovery query.",
-        ),
-    ] = DEFAULT_LEVER_DISCOVERY_RESULTS_PER_QUERY,
-    pages: Annotated[
-        int,
-        typer.Option(
-            "--pages",
-            min=1,
-            help="Serper result pages requested per Lever discovery query.",
-        ),
-    ] = DEFAULT_LEVER_DISCOVERY_PAGES,
-) -> None:
-    """Discover public Lever board URLs through search-index queries."""
-    country_codes = _parse_country_codes(countries)
-    parsed_location_depth = _parse_location_depth(location_depth)
-    parsed_discovery_depth = _parse_ats_discovery_depth(discovery_depth)
-    discovery_queries = _build_lever_discovery_queries(
-        country_codes=country_codes,
-        limit=limit,
-        location_depth=parsed_location_depth,
-        discovery_depth=parsed_discovery_depth,
-        results_per_query=results_per_query,
-        pages=pages,
-    )
-
-    if dry_run:
-        _print_lever_discovery_queries(discovery_queries)
-        return
-
-    try:
-        api_key = require_serper_api_key()
-    except RuntimeError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
-
-    client = SerperGoogleClient(api_key=api_key)
-    try:
-        result = discover_lever_boards(discovery_queries, client=client)
-    finally:
-        client.close()
-
-    console.print(
-        "Lever discovery complete: "
-        f"{result.board_count} board(s), "
-        f"{result.query_count} querie(s), "
-        f"{result.error_count} error(s)."
-    )
-    console.print(f"Boards: {result.boards_path.as_posix()}")
-    console.print(f"Manifest: {result.manifest_path.as_posix()}")
-
-
-@app.command("collect-lever")
-def collect_lever(
-    countries: Annotated[
-        str,
-        typer.Option(
-            "--countries",
-            help="Comma-separated country codes for Lever board discovery.",
-        ),
-    ] = "nl,uk,dk",
-    board_url: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--board-url",
-            help="Lever board URL or site slug. Can be repeated to skip discovery.",
-        ),
-    ] = None,
-    boards_file: Annotated[
-        Path | None,
-        typer.Option(
-            "--boards-file",
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-            help="JSONL or plain-text file containing Lever board values.",
-        ),
-    ] = None,
-    collection_date: Annotated[
-        str | None,
-        typer.Option("--collection-date", help="Collection date in YYYY-MM-DD format."),
-    ] = None,
-    resume: Annotated[
-        bool,
-        typer.Option(
-            "--resume/--no-resume",
-            help="Reuse successful board results already collected for this date.",
-        ),
-    ] = True,
-    request_delay_seconds: Annotated[
-        float,
-        typer.Option(
-            "--request-delay",
-            min=0,
-            help="Delay in seconds between provider requests.",
-        ),
-    ] = DEFAULT_REQUEST_DELAY_SECONDS,
-    max_retries: Annotated[
-        int,
-        typer.Option(
-            "--max-retries",
-            min=0,
-            help="Maximum retries for transient provider request failures.",
-        ),
-    ] = DEFAULT_MAX_RETRIES,
-    limit: Annotated[
-        int | None,
-        typer.Option(
-            "--limit",
-            min=1,
-            help="Limit the number of generated discovery queries.",
-        ),
-    ] = None,
-    dry_run: Annotated[
-        bool,
-        typer.Option(
-            "--dry-run",
-            help="Print discovery queries or board URLs without fetching Lever.",
-        ),
-    ] = False,
-    location_depth: Annotated[
-        str,
-        typer.Option(
-            "--location-depth",
-            help="Search location depth: country or cities.",
-        ),
-    ] = LocationDepth.CITIES.value,
-    discovery_depth: Annotated[
-        str,
-        typer.Option(
-            "--discovery-depth",
-            help="Lever discovery depth: standard, broad, or exhaustive.",
-        ),
-    ] = LeverDiscoveryDepth.EXHAUSTIVE.value,
-    results_per_query: Annotated[
-        int,
-        typer.Option(
-            "--results-per-query",
-            min=1,
-            max=MAX_LEVER_DISCOVERY_RESULTS_PER_QUERY,
-            help="Serper results requested per Lever discovery query.",
-        ),
-    ] = DEFAULT_LEVER_DISCOVERY_RESULTS_PER_QUERY,
-    pages: Annotated[
-        int,
-        typer.Option(
-            "--pages",
-            min=1,
-            help="Serper result pages requested per Lever discovery query.",
-        ),
-    ] = DEFAULT_LEVER_DISCOVERY_PAGES,
-) -> None:
-    """Discover Lever boards and collect public ATS job data."""
-    parsed_collection_date = (
-        _parse_iso_date(collection_date) if collection_date is not None else None
-    )
-    explicit_input, board_values = _resolve_explicit_board_values(
-        board_url,
-        boards_file,
-        normalize_lever_board,
-    )
-
-    if explicit_input:
-        if dry_run:
-            console.print(f"Normalized {len(board_values)} Lever board URL(s).")
-            for value in board_values:
-                console.print(value, markup=False)
-            return
-    else:
-        country_codes = _parse_country_codes(countries)
-        parsed_location_depth = _parse_location_depth(location_depth)
-        parsed_discovery_depth = _parse_ats_discovery_depth(discovery_depth)
-        discovery_queries = _build_lever_discovery_queries(
-            country_codes=country_codes,
-            limit=limit,
-            location_depth=parsed_location_depth,
-            discovery_depth=parsed_discovery_depth,
-            results_per_query=results_per_query,
-            pages=pages,
-        )
-
-        if dry_run:
-            _print_lever_discovery_queries(discovery_queries)
-            return
-
-        try:
-            api_key = require_serper_api_key()
-        except RuntimeError as exc:
-            console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(code=1) from exc
-
-        search_client = SerperGoogleClient(api_key=api_key)
-        try:
-            discovery_result = discover_lever_boards(
-                discovery_queries,
-                client=search_client,
-            )
-        finally:
-            search_client.close()
-
-        board_values = [str(record["board_url"]) for record in discovery_result.boards]
-        console.print(
-            "Lever discovery complete: "
-            f"{discovery_result.board_count} board(s), "
-            f"{discovery_result.error_count} error(s)."
-        )
-        console.print(f"Boards: {discovery_result.boards_path.as_posix()}")
-
-    if not board_values:
-        console.print("No Lever boards to collect.")
-        return
-
-    lever_client = LeverClient(
-        request_delay_seconds=request_delay_seconds,
-        max_retries=max_retries,
-    )
-    try:
-        result = collect_lever_boards(
-            board_values,
-            client=lever_client,
-            collection_date=parsed_collection_date,
-            resume=resume,
-        )
-    finally:
-        lever_client.close()
-
-    console.print(
-        "Lever collection complete: "
-        f"{result.board_count} board(s), "
-        f"{len(result.result_files)} result file(s) available, "
-        f"{result.written_count} written, "
-        f"{result.resumed_count} resumed, "
-        f"{result.error_count} error(s)."
-    )
-    console.print(f"Manifest: {result.manifest_path.as_posix()}")
-
-
-@app.command("discover-personio")
-def discover_personio(
-    countries: Annotated[
-        str,
-        typer.Option(
-            "--countries",
-            help="Comma-separated country codes for Personio board discovery.",
-        ),
-    ] = "nl,uk,dk",
-    limit: Annotated[
-        int | None,
-        typer.Option(
-            "--limit",
-            min=1,
-            help="Limit the number of generated discovery queries.",
-        ),
-    ] = None,
-    dry_run: Annotated[
-        bool,
-        typer.Option(
-            "--dry-run",
-            help="Print generated Personio discovery queries without calling Serper.",
-        ),
-    ] = False,
-    location_depth: Annotated[
-        str,
-        typer.Option(
-            "--location-depth",
-            help="Search location depth: country or cities.",
-        ),
-    ] = LocationDepth.CITIES.value,
-    discovery_depth: Annotated[
-        str,
-        typer.Option(
-            "--discovery-depth",
-            help="Personio discovery depth: standard, broad, or exhaustive.",
-        ),
-    ] = PersonioDiscoveryDepth.EXHAUSTIVE.value,
-    results_per_query: Annotated[
-        int,
-        typer.Option(
-            "--results-per-query",
-            min=1,
-            max=MAX_PERSONIO_DISCOVERY_RESULTS_PER_QUERY,
-            help="Serper results requested per Personio discovery query.",
-        ),
-    ] = DEFAULT_PERSONIO_DISCOVERY_RESULTS_PER_QUERY,
-    pages: Annotated[
-        int,
-        typer.Option(
-            "--pages",
-            min=1,
-            help="Serper result pages requested per Personio discovery query.",
-        ),
-    ] = DEFAULT_PERSONIO_DISCOVERY_PAGES,
-) -> None:
-    """Discover public Personio board URLs through search-index queries."""
-    country_codes = _parse_country_codes(countries)
-    parsed_location_depth = _parse_location_depth(location_depth)
-    parsed_discovery_depth = _parse_ats_discovery_depth(discovery_depth)
-    discovery_queries = _build_personio_discovery_queries(
-        country_codes=country_codes,
-        limit=limit,
-        location_depth=parsed_location_depth,
-        discovery_depth=parsed_discovery_depth,
-        results_per_query=results_per_query,
-        pages=pages,
-    )
-
-    if dry_run:
-        _print_personio_discovery_queries(discovery_queries)
-        return
-
-    try:
-        api_key = require_serper_api_key()
-    except RuntimeError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
-
-    client = SerperGoogleClient(api_key=api_key)
-    try:
-        result = discover_personio_boards(discovery_queries, client=client)
-    finally:
-        client.close()
-
-    console.print(
-        "Personio discovery complete: "
-        f"{result.board_count} board(s), "
-        f"{result.query_count} querie(s), "
-        f"{result.error_count} error(s)."
-    )
-    console.print(f"Boards: {result.boards_path.as_posix()}")
-    console.print(f"Manifest: {result.manifest_path.as_posix()}")
-
-
-@app.command("collect-personio")
-def collect_personio(
-    countries: Annotated[
-        str,
-        typer.Option(
-            "--countries",
-            help="Comma-separated country codes for Personio board discovery.",
-        ),
-    ] = "nl,uk,dk",
-    board_url: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--board-url",
-            help="Personio board URL or company slug. Can be repeated to skip discovery.",
-        ),
-    ] = None,
-    boards_file: Annotated[
-        Path | None,
-        typer.Option(
-            "--boards-file",
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-            help="JSONL or plain-text file containing Personio board values.",
+            help="JSONL or plain-text file containing ATS board values.",
         ),
     ] = None,
     collection_date: Annotated[
@@ -1647,717 +534,20 @@ def collect_personio(
         ),
     ] = DEFAULT_MAX_RETRIES,
     language: Annotated[
-        str,
+        str | None,
         typer.Option(
             "--language",
-            help="Personio XML feed language, for example: en, de, nl.",
-        ),
-    ] = DEFAULT_PERSONIO_LANGUAGE,
-    limit: Annotated[
-        int | None,
-        typer.Option(
-            "--limit",
-            min=1,
-            help="Limit the number of generated discovery queries.",
-        ),
-    ] = None,
-    dry_run: Annotated[
-        bool,
-        typer.Option(
-            "--dry-run",
-            help="Print discovery queries or board URLs without fetching Personio.",
-        ),
-    ] = False,
-    location_depth: Annotated[
-        str,
-        typer.Option(
-            "--location-depth",
-            help="Search location depth: country or cities.",
-        ),
-    ] = LocationDepth.CITIES.value,
-    discovery_depth: Annotated[
-        str,
-        typer.Option(
-            "--discovery-depth",
-            help="Personio discovery depth: standard, broad, or exhaustive.",
-        ),
-    ] = PersonioDiscoveryDepth.EXHAUSTIVE.value,
-    results_per_query: Annotated[
-        int,
-        typer.Option(
-            "--results-per-query",
-            min=1,
-            max=MAX_PERSONIO_DISCOVERY_RESULTS_PER_QUERY,
-            help="Serper results requested per Personio discovery query.",
-        ),
-    ] = DEFAULT_PERSONIO_DISCOVERY_RESULTS_PER_QUERY,
-    pages: Annotated[
-        int,
-        typer.Option(
-            "--pages",
-            min=1,
-            help="Serper result pages requested per Personio discovery query.",
-        ),
-    ] = DEFAULT_PERSONIO_DISCOVERY_PAGES,
-) -> None:
-    """Discover Personio boards and collect public ATS job data."""
-    parsed_collection_date = (
-        _parse_iso_date(collection_date) if collection_date is not None else None
-    )
-    explicit_input, board_values = _resolve_explicit_board_values(
-        board_url,
-        boards_file,
-        normalize_personio_board,
-    )
-
-    if explicit_input:
-        if dry_run:
-            console.print(f"Normalized {len(board_values)} Personio board URL(s).")
-            for value in board_values:
-                console.print(value, markup=False)
-            return
-    else:
-        country_codes = _parse_country_codes(countries)
-        parsed_location_depth = _parse_location_depth(location_depth)
-        parsed_discovery_depth = _parse_ats_discovery_depth(discovery_depth)
-        discovery_queries = _build_personio_discovery_queries(
-            country_codes=country_codes,
-            limit=limit,
-            location_depth=parsed_location_depth,
-            discovery_depth=parsed_discovery_depth,
-            results_per_query=results_per_query,
-            pages=pages,
-        )
-
-        if dry_run:
-            _print_personio_discovery_queries(discovery_queries)
-            return
-
-        try:
-            api_key = require_serper_api_key()
-        except RuntimeError as exc:
-            console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(code=1) from exc
-
-        search_client = SerperGoogleClient(api_key=api_key)
-        try:
-            discovery_result = discover_personio_boards(
-                discovery_queries,
-                client=search_client,
-            )
-        finally:
-            search_client.close()
-
-        board_values = [str(record["board_url"]) for record in discovery_result.boards]
-        console.print(
-            "Personio discovery complete: "
-            f"{discovery_result.board_count} board(s), "
-            f"{discovery_result.error_count} error(s)."
-        )
-        console.print(f"Boards: {discovery_result.boards_path.as_posix()}")
-
-    if not board_values:
-        console.print("No Personio boards to collect.")
-        return
-
-    personio_client = PersonioClient(
-        language=language,
-        request_delay_seconds=request_delay_seconds,
-        max_retries=max_retries,
-    )
-    try:
-        result = collect_personio_boards(
-            board_values,
-            client=personio_client,
-            collection_date=parsed_collection_date,
-            resume=resume,
-        )
-    finally:
-        personio_client.close()
-
-    console.print(
-        "Personio collection complete: "
-        f"{result.board_count} board(s), "
-        f"{len(result.result_files)} result file(s) available, "
-        f"{result.written_count} written, "
-        f"{result.resumed_count} resumed, "
-        f"{result.error_count} error(s)."
-    )
-    console.print(f"Manifest: {result.manifest_path.as_posix()}")
-
-
-@app.command("discover-recruitee")
-def discover_recruitee(
-    countries: Annotated[
-        str,
-        typer.Option(
-            "--countries",
-            help="Comma-separated country codes for Recruitee board discovery.",
-        ),
-    ] = "nl,uk,dk",
-    limit: Annotated[
-        int | None,
-        typer.Option(
-            "--limit",
-            min=1,
-            help="Limit the number of generated discovery queries.",
-        ),
-    ] = None,
-    dry_run: Annotated[
-        bool,
-        typer.Option(
-            "--dry-run",
-            help="Print generated Recruitee discovery queries without calling Serper.",
-        ),
-    ] = False,
-    location_depth: Annotated[
-        str,
-        typer.Option(
-            "--location-depth",
-            help="Search location depth: country or cities.",
-        ),
-    ] = LocationDepth.CITIES.value,
-    discovery_depth: Annotated[
-        str,
-        typer.Option(
-            "--discovery-depth",
-            help="Recruitee discovery depth: standard, broad, or exhaustive.",
-        ),
-    ] = RecruiteeDiscoveryDepth.EXHAUSTIVE.value,
-    results_per_query: Annotated[
-        int,
-        typer.Option(
-            "--results-per-query",
-            min=1,
-            max=MAX_RECRUITEE_DISCOVERY_RESULTS_PER_QUERY,
-            help="Serper results requested per Recruitee discovery query.",
-        ),
-    ] = DEFAULT_RECRUITEE_DISCOVERY_RESULTS_PER_QUERY,
-    pages: Annotated[
-        int,
-        typer.Option(
-            "--pages",
-            min=1,
-            help="Serper result pages requested per Recruitee discovery query.",
-        ),
-    ] = DEFAULT_RECRUITEE_DISCOVERY_PAGES,
-) -> None:
-    """Discover public Recruitee board URLs through search-index queries."""
-    country_codes = _parse_country_codes(countries)
-    parsed_location_depth = _parse_location_depth(location_depth)
-    parsed_discovery_depth = _parse_ats_discovery_depth(discovery_depth)
-    discovery_queries = _build_recruitee_discovery_queries(
-        country_codes=country_codes,
-        limit=limit,
-        location_depth=parsed_location_depth,
-        discovery_depth=parsed_discovery_depth,
-        results_per_query=results_per_query,
-        pages=pages,
-    )
-
-    if dry_run:
-        _print_recruitee_discovery_queries(discovery_queries)
-        return
-
-    try:
-        api_key = require_serper_api_key()
-    except RuntimeError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
-
-    client = SerperGoogleClient(api_key=api_key)
-    try:
-        result = discover_recruitee_boards(discovery_queries, client=client)
-    finally:
-        client.close()
-
-    console.print(
-        "Recruitee discovery complete: "
-        f"{result.board_count} board(s), "
-        f"{result.query_count} querie(s), "
-        f"{result.error_count} error(s)."
-    )
-    console.print(f"Boards: {result.boards_path.as_posix()}")
-    console.print(f"Manifest: {result.manifest_path.as_posix()}")
-
-
-@app.command("discover-teamtailor")
-def discover_teamtailor(
-    countries: Annotated[
-        str,
-        typer.Option(
-            "--countries",
-            help="Comma-separated country codes for Teamtailor board discovery.",
-        ),
-    ] = "nl,uk,dk",
-    limit: Annotated[
-        int | None,
-        typer.Option(
-            "--limit",
-            min=1,
-            help="Limit the number of generated discovery queries.",
-        ),
-    ] = None,
-    dry_run: Annotated[
-        bool,
-        typer.Option(
-            "--dry-run",
-            help="Print generated Teamtailor discovery queries without calling Serper.",
-        ),
-    ] = False,
-    location_depth: Annotated[
-        str,
-        typer.Option(
-            "--location-depth",
-            help="Search location depth: country or cities.",
-        ),
-    ] = LocationDepth.CITIES.value,
-    discovery_depth: Annotated[
-        str,
-        typer.Option(
-            "--discovery-depth",
-            help="Teamtailor discovery depth: standard, broad, or exhaustive.",
-        ),
-    ] = TeamtailorDiscoveryDepth.EXHAUSTIVE.value,
-    results_per_query: Annotated[
-        int,
-        typer.Option(
-            "--results-per-query",
-            min=1,
-            max=MAX_TEAMTAILOR_DISCOVERY_RESULTS_PER_QUERY,
-            help="Serper results requested per Teamtailor discovery query.",
-        ),
-    ] = DEFAULT_TEAMTAILOR_DISCOVERY_RESULTS_PER_QUERY,
-    pages: Annotated[
-        int,
-        typer.Option(
-            "--pages",
-            min=1,
-            help="Serper result pages requested per Teamtailor discovery query.",
-        ),
-    ] = DEFAULT_TEAMTAILOR_DISCOVERY_PAGES,
-) -> None:
-    """Discover public Teamtailor board URLs through search-index queries."""
-    country_codes = _parse_country_codes(countries)
-    parsed_location_depth = _parse_location_depth(location_depth)
-    parsed_discovery_depth = _parse_ats_discovery_depth(discovery_depth)
-    discovery_queries = _build_teamtailor_discovery_queries(
-        country_codes=country_codes,
-        limit=limit,
-        location_depth=parsed_location_depth,
-        discovery_depth=parsed_discovery_depth,
-        results_per_query=results_per_query,
-        pages=pages,
-    )
-
-    if dry_run:
-        _print_teamtailor_discovery_queries(discovery_queries)
-        return
-
-    try:
-        api_key = require_serper_api_key()
-    except RuntimeError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
-
-    client = SerperGoogleClient(api_key=api_key)
-    try:
-        result = discover_teamtailor_boards(discovery_queries, client=client)
-    finally:
-        client.close()
-
-    console.print(
-        "Teamtailor discovery complete: "
-        f"{result.board_count} board(s), "
-        f"{result.query_count} querie(s), "
-        f"{result.error_count} error(s)."
-    )
-    console.print(f"Boards: {result.boards_path.as_posix()}")
-    console.print(f"Manifest: {result.manifest_path.as_posix()}")
-
-
-@app.command("collect-recruitee")
-def collect_recruitee(
-    countries: Annotated[
-        str,
-        typer.Option(
-            "--countries",
-            help="Comma-separated country codes for Recruitee board discovery.",
-        ),
-    ] = "nl,uk,dk",
-    board_url: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--board-url",
-            help="Recruitee board URL or company slug. Can be repeated to skip discovery.",
-        ),
-    ] = None,
-    boards_file: Annotated[
-        Path | None,
-        typer.Option(
-            "--boards-file",
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-            help="JSONL or plain-text file containing Recruitee board values.",
-        ),
-    ] = None,
-    collection_date: Annotated[
-        str | None,
-        typer.Option("--collection-date", help="Collection date in YYYY-MM-DD format."),
-    ] = None,
-    resume: Annotated[
-        bool,
-        typer.Option(
-            "--resume/--no-resume",
-            help="Reuse successful board results already collected for this date.",
-        ),
-    ] = True,
-    request_delay_seconds: Annotated[
-        float,
-        typer.Option(
-            "--request-delay",
-            min=0,
-            help="Delay in seconds between provider requests.",
-        ),
-    ] = DEFAULT_REQUEST_DELAY_SECONDS,
-    max_retries: Annotated[
-        int,
-        typer.Option(
-            "--max-retries",
-            min=0,
-            help="Maximum retries for transient provider request failures.",
-        ),
-    ] = DEFAULT_MAX_RETRIES,
-    limit: Annotated[
-        int | None,
-        typer.Option(
-            "--limit",
-            min=1,
-            help="Limit the number of generated discovery queries.",
-        ),
-    ] = None,
-    dry_run: Annotated[
-        bool,
-        typer.Option(
-            "--dry-run",
-            help="Print discovery queries or board URLs without fetching Recruitee.",
-        ),
-    ] = False,
-    location_depth: Annotated[
-        str,
-        typer.Option(
-            "--location-depth",
-            help="Search location depth: country or cities.",
-        ),
-    ] = LocationDepth.CITIES.value,
-    discovery_depth: Annotated[
-        str,
-        typer.Option(
-            "--discovery-depth",
-            help="Recruitee discovery depth: standard, broad, or exhaustive.",
-        ),
-    ] = RecruiteeDiscoveryDepth.EXHAUSTIVE.value,
-    results_per_query: Annotated[
-        int,
-        typer.Option(
-            "--results-per-query",
-            min=1,
-            max=MAX_RECRUITEE_DISCOVERY_RESULTS_PER_QUERY,
-            help="Serper results requested per Recruitee discovery query.",
-        ),
-    ] = DEFAULT_RECRUITEE_DISCOVERY_RESULTS_PER_QUERY,
-    pages: Annotated[
-        int,
-        typer.Option(
-            "--pages",
-            min=1,
-            help="Serper result pages requested per Recruitee discovery query.",
-        ),
-    ] = DEFAULT_RECRUITEE_DISCOVERY_PAGES,
-) -> None:
-    """Discover Recruitee boards and collect public job listings with details."""
-    parsed_collection_date = (
-        _parse_iso_date(collection_date) if collection_date is not None else None
-    )
-    explicit_input, board_values = _resolve_explicit_board_values(
-        board_url,
-        boards_file,
-        normalize_recruitee_board,
-    )
-
-    if explicit_input:
-        if dry_run:
-            console.print(f"Normalized {len(board_values)} Recruitee board URL(s).")
-            for value in board_values:
-                console.print(value, markup=False)
-            return
-    else:
-        country_codes = _parse_country_codes(countries)
-        parsed_location_depth = _parse_location_depth(location_depth)
-        parsed_discovery_depth = _parse_ats_discovery_depth(discovery_depth)
-        discovery_queries = _build_recruitee_discovery_queries(
-            country_codes=country_codes,
-            limit=limit,
-            location_depth=parsed_location_depth,
-            discovery_depth=parsed_discovery_depth,
-            results_per_query=results_per_query,
-            pages=pages,
-        )
-
-        if dry_run:
-            _print_recruitee_discovery_queries(discovery_queries)
-            return
-
-        try:
-            api_key = require_serper_api_key()
-        except RuntimeError as exc:
-            console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(code=1) from exc
-
-        search_client = SerperGoogleClient(api_key=api_key)
-        try:
-            discovery_result = discover_recruitee_boards(
-                discovery_queries,
-                client=search_client,
-            )
-        finally:
-            search_client.close()
-
-        board_values = [str(record["board_url"]) for record in discovery_result.boards]
-        console.print(
-            "Recruitee discovery complete: "
-            f"{discovery_result.board_count} board(s), "
-            f"{discovery_result.error_count} error(s)."
-        )
-        console.print(f"Boards: {discovery_result.boards_path.as_posix()}")
-
-    if not board_values:
-        console.print("No Recruitee boards to collect.")
-        return
-
-    recruitee_client = RecruiteeClient(
-        request_delay_seconds=request_delay_seconds,
-        max_retries=max_retries,
-    )
-    try:
-        result = collect_recruitee_boards(
-            board_values,
-            client=recruitee_client,
-            collection_date=parsed_collection_date,
-            resume=resume,
-        )
-    finally:
-        recruitee_client.close()
-
-    console.print(
-        "Recruitee collection complete: "
-        f"{result.board_count} board(s), "
-        f"{len(result.result_files)} result file(s) available, "
-        f"{result.written_count} written, "
-        f"{result.resumed_count} resumed, "
-        f"{result.error_count} error(s)."
-    )
-    console.print(f"Manifest: {result.manifest_path.as_posix()}")
-
-
-@app.command("collect-teamtailor")
-def collect_teamtailor(
-    countries: Annotated[
-        str,
-        typer.Option(
-            "--countries",
-            help="Comma-separated country codes for Teamtailor board discovery.",
-        ),
-    ] = "nl,uk,dk",
-    board_url: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--board-url",
             help=(
-                "Teamtailor board URL or company slug. "
-                "Can be repeated to skip discovery."
+                "Personio feed language (default: en). "
+                "Accepted but ignored by other providers."
             ),
         ),
     ] = None,
-    boards_file: Annotated[
-        Path | None,
-        typer.Option(
-            "--boards-file",
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-            help="JSONL or plain-text file containing Teamtailor board values.",
-        ),
-    ] = None,
-    collection_date: Annotated[
-        str | None,
-        typer.Option("--collection-date", help="Collection date in YYYY-MM-DD format."),
-    ] = None,
-    resume: Annotated[
-        bool,
-        typer.Option(
-            "--resume/--no-resume",
-            help="Reuse successful board results already collected for this date.",
-        ),
-    ] = True,
-    request_delay_seconds: Annotated[
-        float,
-        typer.Option(
-            "--request-delay",
-            min=0,
-            help="Delay in seconds between provider requests.",
-        ),
-    ] = DEFAULT_REQUEST_DELAY_SECONDS,
-    max_retries: Annotated[
-        int,
-        typer.Option(
-            "--max-retries",
-            min=0,
-            help="Maximum retries for transient provider request failures.",
-        ),
-    ] = DEFAULT_MAX_RETRIES,
-    limit: Annotated[
-        int | None,
-        typer.Option(
-            "--limit",
-            min=1,
-            help="Limit the number of generated discovery queries.",
-        ),
-    ] = None,
-    dry_run: Annotated[
-        bool,
-        typer.Option(
-            "--dry-run",
-            help="Print discovery queries or board URLs without fetching Teamtailor.",
-        ),
-    ] = False,
-    location_depth: Annotated[
-        str,
-        typer.Option(
-            "--location-depth",
-            help="Search location depth: country or cities.",
-        ),
-    ] = LocationDepth.CITIES.value,
-    discovery_depth: Annotated[
-        str,
-        typer.Option(
-            "--discovery-depth",
-            help="Teamtailor discovery depth: standard, broad, or exhaustive.",
-        ),
-    ] = TeamtailorDiscoveryDepth.EXHAUSTIVE.value,
-    results_per_query: Annotated[
-        int,
-        typer.Option(
-            "--results-per-query",
-            min=1,
-            max=MAX_TEAMTAILOR_DISCOVERY_RESULTS_PER_QUERY,
-            help="Serper results requested per Teamtailor discovery query.",
-        ),
-    ] = DEFAULT_TEAMTAILOR_DISCOVERY_RESULTS_PER_QUERY,
-    pages: Annotated[
-        int,
-        typer.Option(
-            "--pages",
-            min=1,
-            help="Serper result pages requested per Teamtailor discovery query.",
-        ),
-    ] = DEFAULT_TEAMTAILOR_DISCOVERY_PAGES,
-) -> None:
-    """Discover Teamtailor boards and collect public RSS job data."""
-    parsed_collection_date = (
-        _parse_iso_date(collection_date) if collection_date is not None else None
-    )
-    explicit_input, board_values = _resolve_explicit_board_values(
-        board_url,
-        boards_file,
-        normalize_teamtailor_board,
-    )
-
-    if explicit_input:
-        if dry_run:
-            console.print(f"Normalized {len(board_values)} Teamtailor board URL(s).")
-            for value in board_values:
-                console.print(value, markup=False)
-            return
-    else:
-        country_codes = _parse_country_codes(countries)
-        parsed_location_depth = _parse_location_depth(location_depth)
-        parsed_discovery_depth = _parse_ats_discovery_depth(discovery_depth)
-        discovery_queries = _build_teamtailor_discovery_queries(
-            country_codes=country_codes,
-            limit=limit,
-            location_depth=parsed_location_depth,
-            discovery_depth=parsed_discovery_depth,
-            results_per_query=results_per_query,
-            pages=pages,
-        )
-
-        if dry_run:
-            _print_teamtailor_discovery_queries(discovery_queries)
-            return
-
-        try:
-            api_key = require_serper_api_key()
-        except RuntimeError as exc:
-            console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(code=1) from exc
-
-        search_client = SerperGoogleClient(api_key=api_key)
-        try:
-            discovery_result = discover_teamtailor_boards(
-                discovery_queries,
-                client=search_client,
-            )
-        finally:
-            search_client.close()
-
-        board_values = [str(record["board_url"]) for record in discovery_result.boards]
-        console.print(
-            "Teamtailor discovery complete: "
-            f"{discovery_result.board_count} board(s), "
-            f"{discovery_result.error_count} error(s)."
-        )
-        console.print(f"Boards: {discovery_result.boards_path.as_posix()}")
-
-    if not board_values:
-        console.print("No Teamtailor boards to collect.")
-        return
-
-    teamtailor_client = TeamtailorClient(
-        request_delay_seconds=request_delay_seconds,
-        max_retries=max_retries,
-    )
-    try:
-        result = collect_teamtailor_boards(
-            board_values,
-            client=teamtailor_client,
-            collection_date=parsed_collection_date,
-            resume=resume,
-        )
-    finally:
-        teamtailor_client.close()
-
-    console.print(
-        "Teamtailor collection complete: "
-        f"{result.board_count} board(s), "
-        f"{len(result.result_files)} result file(s) available, "
-        f"{result.written_count} written, "
-        f"{result.resumed_count} resumed, "
-        f"{result.error_count} error(s)."
-    )
-    console.print(f"Manifest: {result.manifest_path.as_posix()}")
-
-
-@app.command("discover-smartrecruiters")
-def discover_smartrecruiters(
     countries: Annotated[
         str,
         typer.Option(
             "--countries",
-            help="Comma-separated country codes for SmartRecruiters board discovery.",
+            help="Comma-separated country codes for ATS board discovery.",
         ),
     ] = "nl,uk,dk",
     limit: Annotated[
@@ -2372,7 +562,7 @@ def discover_smartrecruiters(
         bool,
         typer.Option(
             "--dry-run",
-            help="Print generated SmartRecruiters discovery queries without calling Serper.",
+            help="Print discovery queries or normalized boards without fetching jobs.",
         ),
     ] = False,
     location_depth: Annotated[
@@ -2386,529 +576,96 @@ def discover_smartrecruiters(
         str,
         typer.Option(
             "--discovery-depth",
-            help="SmartRecruiters discovery depth: standard, broad, or exhaustive.",
+            help="ATS discovery depth: standard, broad, or exhaustive.",
         ),
-    ] = SmartRecruitersDiscoveryDepth.EXHAUSTIVE.value,
+    ] = AtsDiscoveryDepth.EXHAUSTIVE.value,
     results_per_query: Annotated[
-        int,
+        int | None,
         typer.Option(
             "--results-per-query",
             min=1,
-            max=MAX_SMARTRECRUITERS_DISCOVERY_RESULTS_PER_QUERY,
-            help="Serper results requested per SmartRecruiters discovery query.",
-        ),
-    ] = DEFAULT_SMARTRECRUITERS_DISCOVERY_RESULTS_PER_QUERY,
-    pages: Annotated[
-        int,
-        typer.Option(
-            "--pages",
-            min=1,
-            help="Serper result pages requested per SmartRecruiters discovery query.",
-        ),
-    ] = DEFAULT_SMARTRECRUITERS_DISCOVERY_PAGES,
-) -> None:
-    """Discover public SmartRecruiters board URLs through search-index queries."""
-    country_codes = _parse_country_codes(countries)
-    parsed_location_depth = _parse_location_depth(location_depth)
-    parsed_discovery_depth = _parse_ats_discovery_depth(discovery_depth)
-    discovery_queries = _build_smartrecruiters_discovery_queries(
-        country_codes=country_codes,
-        limit=limit,
-        location_depth=parsed_location_depth,
-        discovery_depth=parsed_discovery_depth,
-        results_per_query=results_per_query,
-        pages=pages,
-    )
-
-    if dry_run:
-        _print_smartrecruiters_discovery_queries(discovery_queries)
-        return
-
-    try:
-        api_key = require_serper_api_key()
-    except RuntimeError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
-
-    client = SerperGoogleClient(api_key=api_key)
-    try:
-        result = discover_smartrecruiters_boards(discovery_queries, client=client)
-    finally:
-        client.close()
-
-    console.print(
-        "SmartRecruiters discovery complete: "
-        f"{result.board_count} board(s), "
-        f"{result.query_count} querie(s), "
-        f"{result.error_count} error(s)."
-    )
-    console.print(f"Boards: {result.boards_path.as_posix()}")
-    console.print(f"Manifest: {result.manifest_path.as_posix()}")
-
-
-@app.command("collect-smartrecruiters")
-def collect_smartrecruiters(
-    countries: Annotated[
-        str,
-        typer.Option(
-            "--countries",
-            help="Comma-separated country codes for SmartRecruiters board discovery.",
-        ),
-    ] = "nl,uk,dk",
-    board_url: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--board-url",
             help=(
-                "SmartRecruiters board URL or company identifier. "
-                "Can be repeated to skip discovery."
+                "Serper results requested per discovery query. "
+                "Defaults to the selected provider setting (currently 10)."
             ),
         ),
     ] = None,
-    boards_file: Annotated[
-        Path | None,
-        typer.Option(
-            "--boards-file",
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-            help="JSONL or plain-text file containing SmartRecruiters board values.",
-        ),
-    ] = None,
-    collection_date: Annotated[
-        str | None,
-        typer.Option("--collection-date", help="Collection date in YYYY-MM-DD format."),
-    ] = None,
-    resume: Annotated[
-        bool,
-        typer.Option(
-            "--resume/--no-resume",
-            help="Reuse successful board results already collected for this date.",
-        ),
-    ] = True,
-    request_delay_seconds: Annotated[
-        float,
-        typer.Option(
-            "--request-delay",
-            min=0,
-            help="Delay in seconds between provider requests.",
-        ),
-    ] = DEFAULT_REQUEST_DELAY_SECONDS,
-    max_retries: Annotated[
-        int,
-        typer.Option(
-            "--max-retries",
-            min=0,
-            help="Maximum retries for transient provider request failures.",
-        ),
-    ] = DEFAULT_MAX_RETRIES,
-    limit: Annotated[
-        int | None,
-        typer.Option(
-            "--limit",
-            min=1,
-            help="Limit the number of generated discovery queries.",
-        ),
-    ] = None,
-    dry_run: Annotated[
-        bool,
-        typer.Option(
-            "--dry-run",
-            help="Print discovery queries or board URLs without fetching SmartRecruiters.",
-        ),
-    ] = False,
-    location_depth: Annotated[
-        str,
-        typer.Option(
-            "--location-depth",
-            help="Search location depth: country or cities.",
-        ),
-    ] = LocationDepth.CITIES.value,
-    discovery_depth: Annotated[
-        str,
-        typer.Option(
-            "--discovery-depth",
-            help="SmartRecruiters discovery depth: standard, broad, or exhaustive.",
-        ),
-    ] = SmartRecruitersDiscoveryDepth.EXHAUSTIVE.value,
-    results_per_query: Annotated[
-        int,
-        typer.Option(
-            "--results-per-query",
-            min=1,
-            max=MAX_SMARTRECRUITERS_DISCOVERY_RESULTS_PER_QUERY,
-            help="Serper results requested per SmartRecruiters discovery query.",
-        ),
-    ] = DEFAULT_SMARTRECRUITERS_DISCOVERY_RESULTS_PER_QUERY,
     pages: Annotated[
-        int,
+        int | None,
         typer.Option(
             "--pages",
             min=1,
-            help="Serper result pages requested per SmartRecruiters discovery query.",
+            help=(
+                "Serper result pages requested per discovery query. "
+                "Defaults to the selected provider setting (currently 2)."
+            ),
         ),
-    ] = DEFAULT_SMARTRECRUITERS_DISCOVERY_PAGES,
+    ] = None,
 ) -> None:
-    """Discover SmartRecruiters boards and collect public ATS job data."""
+    """Discover ATS boards and collect their public job data."""
+    spec = get_ats_provider_spec(provider)
     parsed_collection_date = (
         _parse_iso_date(collection_date) if collection_date is not None else None
+    )
+    resolved_results, resolved_pages = _resolve_ats_discovery_options(
+        spec,
+        results_per_query=results_per_query,
+        pages=pages,
     )
     explicit_input, board_values = _resolve_explicit_board_values(
         board_url,
         boards_file,
-        normalize_smartrecruiters_board,
+        spec.normalize_board,
     )
 
     if explicit_input:
         if dry_run:
             console.print(
-                f"Normalized {len(board_values)} SmartRecruiters board URL(s)."
+                f"Normalized {len(board_values)} {spec.display_name} board URL(s)."
             )
             for value in board_values:
                 console.print(value, markup=False)
             return
     else:
-        country_codes = _parse_country_codes(countries)
-        parsed_location_depth = _parse_location_depth(location_depth)
-        parsed_discovery_depth = _parse_ats_discovery_depth(discovery_depth)
-        discovery_queries = _build_smartrecruiters_discovery_queries(
-            country_codes=country_codes,
+        discovery_queries = _build_ats_discovery_queries(
+            spec,
+            country_codes=_parse_country_codes(countries),
             limit=limit,
-            location_depth=parsed_location_depth,
-            discovery_depth=parsed_discovery_depth,
-            results_per_query=results_per_query,
-            pages=pages,
+            location_depth=_parse_location_depth(location_depth),
+            discovery_depth=_parse_ats_discovery_depth(discovery_depth),
+            results_per_query=resolved_results,
+            pages=resolved_pages,
         )
-
         if dry_run:
-            _print_smartrecruiters_discovery_queries(discovery_queries)
+            _print_ats_discovery_queries(spec, discovery_queries)
             return
 
-        try:
-            api_key = require_serper_api_key()
-        except RuntimeError as exc:
-            console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(code=1) from exc
-
-        search_client = SerperGoogleClient(api_key=api_key)
-        try:
-            discovery_result = discover_smartrecruiters_boards(
-                discovery_queries,
-                client=search_client,
-            )
-        finally:
-            search_client.close()
-
+        discovery_result = _run_ats_discovery(spec, discovery_queries)
         board_values = [str(record["board_url"]) for record in discovery_result.boards]
-        console.print(
-            "SmartRecruiters discovery complete: "
-            f"{discovery_result.board_count} board(s), "
-            f"{discovery_result.error_count} error(s)."
-        )
-        console.print(f"Boards: {discovery_result.boards_path.as_posix()}")
 
     if not board_values:
-        console.print("No SmartRecruiters boards to collect.")
+        console.print(f"No {spec.display_name} boards to collect.")
         return
 
-    smartrecruiters_client = SmartRecruitersClient(
-        request_delay_seconds=request_delay_seconds,
-        max_retries=max_retries,
+    client = spec.make_client(
+        AtsClientOptions(
+            request_delay_seconds=request_delay_seconds,
+            max_retries=max_retries,
+            language=language,
+        )
     )
     try:
-        result = collect_smartrecruiters_boards(
+        result = spec.collect_boards(
             board_values,
-            client=smartrecruiters_client,
+            client=client,
             collection_date=parsed_collection_date,
             resume=resume,
         )
-    finally:
-        smartrecruiters_client.close()
-
-    console.print(
-        "SmartRecruiters collection complete: "
-        f"{result.board_count} board(s), "
-        f"{len(result.result_files)} result file(s) available, "
-        f"{result.written_count} written, "
-        f"{result.resumed_count} resumed, "
-        f"{result.error_count} error(s)."
-    )
-    console.print(f"Manifest: {result.manifest_path.as_posix()}")
-
-
-@app.command("discover-workable")
-def discover_workable(
-    countries: Annotated[
-        str,
-        typer.Option(
-            "--countries",
-            help="Comma-separated country codes for Workable board discovery.",
-        ),
-    ] = "nl,uk,dk",
-    limit: Annotated[
-        int | None,
-        typer.Option(
-            "--limit",
-            min=1,
-            help="Limit the number of generated discovery queries.",
-        ),
-    ] = None,
-    dry_run: Annotated[
-        bool,
-        typer.Option(
-            "--dry-run",
-            help="Print generated Workable discovery queries without calling Serper.",
-        ),
-    ] = False,
-    location_depth: Annotated[
-        str,
-        typer.Option(
-            "--location-depth",
-            help="Search location depth: country or cities.",
-        ),
-    ] = LocationDepth.CITIES.value,
-    discovery_depth: Annotated[
-        str,
-        typer.Option(
-            "--discovery-depth",
-            help="Workable discovery depth: standard, broad, or exhaustive.",
-        ),
-    ] = WorkableDiscoveryDepth.EXHAUSTIVE.value,
-    results_per_query: Annotated[
-        int,
-        typer.Option(
-            "--results-per-query",
-            min=1,
-            max=MAX_WORKABLE_DISCOVERY_RESULTS_PER_QUERY,
-            help="Serper results requested per Workable discovery query.",
-        ),
-    ] = DEFAULT_WORKABLE_DISCOVERY_RESULTS_PER_QUERY,
-    pages: Annotated[
-        int,
-        typer.Option(
-            "--pages",
-            min=1,
-            help="Serper result pages requested per Workable discovery query.",
-        ),
-    ] = DEFAULT_WORKABLE_DISCOVERY_PAGES,
-) -> None:
-    """Discover public Workable board URLs through search-index queries."""
-    country_codes = _parse_country_codes(countries)
-    parsed_location_depth = _parse_location_depth(location_depth)
-    parsed_discovery_depth = _parse_ats_discovery_depth(discovery_depth)
-    discovery_queries = _build_workable_discovery_queries(
-        country_codes=country_codes,
-        limit=limit,
-        location_depth=parsed_location_depth,
-        discovery_depth=parsed_discovery_depth,
-        results_per_query=results_per_query,
-        pages=pages,
-    )
-
-    if dry_run:
-        _print_workable_discovery_queries(discovery_queries)
-        return
-
-    try:
-        api_key = require_serper_api_key()
-    except RuntimeError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
-
-    client = SerperGoogleClient(api_key=api_key)
-    try:
-        result = discover_workable_boards(discovery_queries, client=client)
     finally:
         client.close()
 
     console.print(
-        "Workable discovery complete: "
-        f"{result.board_count} board(s), "
-        f"{result.query_count} querie(s), "
-        f"{result.error_count} error(s)."
-    )
-    console.print(f"Boards: {result.boards_path.as_posix()}")
-    console.print(f"Manifest: {result.manifest_path.as_posix()}")
-
-
-@app.command("collect-workable")
-def collect_workable(
-    countries: Annotated[
-        str,
-        typer.Option(
-            "--countries",
-            help="Comma-separated country codes for Workable board discovery.",
-        ),
-    ] = "nl,uk,dk",
-    board_url: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--board-url",
-            help="Workable board URL or account slug. Can be repeated to skip discovery.",
-        ),
-    ] = None,
-    boards_file: Annotated[
-        Path | None,
-        typer.Option(
-            "--boards-file",
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-            help="JSONL or plain-text file containing Workable board values.",
-        ),
-    ] = None,
-    collection_date: Annotated[
-        str | None,
-        typer.Option("--collection-date", help="Collection date in YYYY-MM-DD format."),
-    ] = None,
-    resume: Annotated[
-        bool,
-        typer.Option(
-            "--resume/--no-resume",
-            help="Reuse successful board results already collected for this date.",
-        ),
-    ] = True,
-    request_delay_seconds: Annotated[
-        float,
-        typer.Option(
-            "--request-delay",
-            min=0,
-            help="Delay in seconds between provider requests.",
-        ),
-    ] = DEFAULT_REQUEST_DELAY_SECONDS,
-    max_retries: Annotated[
-        int,
-        typer.Option(
-            "--max-retries",
-            min=0,
-            help="Maximum retries for transient provider request failures.",
-        ),
-    ] = DEFAULT_MAX_RETRIES,
-    limit: Annotated[
-        int | None,
-        typer.Option(
-            "--limit",
-            min=1,
-            help="Limit the number of generated discovery queries.",
-        ),
-    ] = None,
-    dry_run: Annotated[
-        bool,
-        typer.Option(
-            "--dry-run",
-            help="Print discovery queries or board URLs without fetching Workable.",
-        ),
-    ] = False,
-    location_depth: Annotated[
-        str,
-        typer.Option(
-            "--location-depth",
-            help="Search location depth: country or cities.",
-        ),
-    ] = LocationDepth.CITIES.value,
-    discovery_depth: Annotated[
-        str,
-        typer.Option(
-            "--discovery-depth",
-            help="Workable discovery depth: standard, broad, or exhaustive.",
-        ),
-    ] = WorkableDiscoveryDepth.EXHAUSTIVE.value,
-    results_per_query: Annotated[
-        int,
-        typer.Option(
-            "--results-per-query",
-            min=1,
-            max=MAX_WORKABLE_DISCOVERY_RESULTS_PER_QUERY,
-            help="Serper results requested per Workable discovery query.",
-        ),
-    ] = DEFAULT_WORKABLE_DISCOVERY_RESULTS_PER_QUERY,
-    pages: Annotated[
-        int,
-        typer.Option(
-            "--pages",
-            min=1,
-            help="Serper result pages requested per Workable discovery query.",
-        ),
-    ] = DEFAULT_WORKABLE_DISCOVERY_PAGES,
-) -> None:
-    """Discover Workable boards and collect public title-only job listings."""
-    parsed_collection_date = (
-        _parse_iso_date(collection_date) if collection_date is not None else None
-    )
-    explicit_input, board_values = _resolve_explicit_board_values(
-        board_url,
-        boards_file,
-        normalize_workable_board,
-    )
-
-    if explicit_input:
-        if dry_run:
-            console.print(f"Normalized {len(board_values)} Workable board URL(s).")
-            for value in board_values:
-                console.print(value, markup=False)
-            return
-    else:
-        country_codes = _parse_country_codes(countries)
-        parsed_location_depth = _parse_location_depth(location_depth)
-        parsed_discovery_depth = _parse_ats_discovery_depth(discovery_depth)
-        discovery_queries = _build_workable_discovery_queries(
-            country_codes=country_codes,
-            limit=limit,
-            location_depth=parsed_location_depth,
-            discovery_depth=parsed_discovery_depth,
-            results_per_query=results_per_query,
-            pages=pages,
-        )
-
-        if dry_run:
-            _print_workable_discovery_queries(discovery_queries)
-            return
-
-        try:
-            api_key = require_serper_api_key()
-        except RuntimeError as exc:
-            console.print(f"[red]{exc}[/red]")
-            raise typer.Exit(code=1) from exc
-
-        search_client = SerperGoogleClient(api_key=api_key)
-        try:
-            discovery_result = discover_workable_boards(
-                discovery_queries,
-                client=search_client,
-            )
-        finally:
-            search_client.close()
-
-        board_values = [str(record["board_url"]) for record in discovery_result.boards]
-        console.print(
-            "Workable discovery complete: "
-            f"{discovery_result.board_count} board(s), "
-            f"{discovery_result.error_count} error(s)."
-        )
-        console.print(f"Boards: {discovery_result.boards_path.as_posix()}")
-
-    if not board_values:
-        console.print("No Workable boards to collect.")
-        return
-
-    workable_client = WorkableClient(
-        request_delay_seconds=request_delay_seconds,
-        max_retries=max_retries,
-    )
-    try:
-        result = collect_workable_boards(
-            board_values,
-            client=workable_client,
-            collection_date=parsed_collection_date,
-            resume=resume,
-        )
-    finally:
-        workable_client.close()
-
-    console.print(
-        "Workable collection complete: "
+        f"{spec.display_name} collection complete: "
         f"{result.board_count} board(s), "
         f"{len(result.result_files)} result file(s) available, "
         f"{result.written_count} written, "

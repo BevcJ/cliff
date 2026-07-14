@@ -54,12 +54,17 @@ def test_us_1_operator_collects_discovery_jsonl_without_serper(
         encoding="utf-8",
     )
     monkeypatch.setattr(cli, "require_serper_api_key", _fail_discovery)
-    monkeypatch.setattr(cli, "_build_greenhouse_discovery_queries", _fail_discovery)
-    monkeypatch.setattr(cli, "discover_greenhouse_boards", _fail_discovery)
 
     result = runner.invoke(
         cli.app,
-        ["collect-greenhouse", "--boards-file", str(boards_path), "--dry-run"],
+        [
+            "ats",
+            "collect",
+            "greenhouse",
+            "--boards-file",
+            str(boards_path),
+            "--dry-run",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -117,12 +122,17 @@ def test_us_3_plain_text_boards_file_prints_normalized_boards_without_discovery(
         encoding="utf-8",
     )
     monkeypatch.setattr(cli, "require_serper_api_key", _fail_discovery)
-    monkeypatch.setattr(cli, "_build_greenhouse_discovery_queries", _fail_discovery)
-    monkeypatch.setattr(cli, "discover_greenhouse_boards", _fail_discovery)
 
     result = runner.invoke(
         cli.app,
-        ["collect-greenhouse", "--boards-file", str(boards_path), "--dry-run"],
+        [
+            "ats",
+            "collect",
+            "greenhouse",
+            "--boards-file",
+            str(boards_path),
+            "--dry-run",
+        ],
     )
 
     assert result.exit_code == 0, result.output
