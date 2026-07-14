@@ -198,7 +198,11 @@ def test_greenhouse_client_gets_public_jobs_endpoint() -> None:
 
     transport = httpx.MockTransport(handler)
     with httpx.Client(transport=transport) as http_client:
-        client = GreenhouseClient(http_client=http_client)
+        client = GreenhouseClient(
+            http_client=http_client,
+            request_delay_seconds=0,
+            max_retries=0,
+        )
         payload = client.fetch_board("https://boards.greenhouse.io/acme")
 
     assert len(requests) == 1
@@ -223,6 +227,10 @@ def test_collect_greenhouse_boards_writes_raw_response_and_manifest(tmp_path) ->
     )
 
     assert result.successful_count == 1
+    assert result.written_count == 1
+    assert result.resumed_count == 0
+    assert result.written_files == result.result_files
+    assert result.resumed_files == []
     assert result.board_count == 1
     assert result.error_count == 0
     raw_record = read_json(Path(result.result_files[0]))
@@ -241,7 +249,68 @@ def test_collect_greenhouse_boards_writes_raw_response_and_manifest(tmp_path) ->
         "matched_count": 2,
         "skipped_count": 2,
     }
-    assert read_json(result.manifest_path)["result_files"] == result.result_files
+    manifest = read_json(result.manifest_path)
+    assert manifest["result_files"] == result.result_files
+    assert manifest["written_files"] == result.written_files
+    assert manifest["resumed_files"] == result.resumed_files
+
+
+def test_collect_greenhouse_boards_refetches_invalid_resume_files(tmp_path) -> None:
+    corrupt_path = write_raw_ats_response(
+        build_raw_greenhouse_response_record(
+            board=greenhouse_board_from_slug("corrupt"),
+            response=_sample_greenhouse_response(),
+            collected_at="2026-06-16T09:00:00Z",
+        ),
+        platform_company_slug="corrupt",
+        collection_date="2026-06-16",
+        data_dir=tmp_path,
+        platform="greenhouse",
+    )
+    corrupt_path.write_text("{not-json", encoding="utf-8")
+    write_raw_ats_response(
+        build_raw_greenhouse_response_record(
+            board=greenhouse_board_from_slug("different-company"),
+            response=_sample_greenhouse_response(),
+            collected_at="2026-06-16T09:00:00Z",
+        ),
+        platform_company_slug="mismatched",
+        collection_date="2026-06-16",
+        data_dir=tmp_path,
+        platform="greenhouse",
+    )
+    client = FakeGreenhouseClient(_sample_greenhouse_response())
+    timestamps = iter(
+        [
+            "2026-06-16T10:00:00Z",
+            "2026-06-16T10:00:01Z",
+            "2026-06-16T10:00:02Z",
+            "2026-06-16T10:00:03Z",
+            "2026-06-16T10:00:04Z",
+        ]
+    )
+
+    result = collect_greenhouse_boards(
+        ["corrupt", "mismatched", "missing"],
+        client=client,  # type: ignore[arg-type]
+        data_dir=tmp_path,
+        clock=lambda: next(timestamps),
+    )
+
+    assert client.fetched_boards == [
+        "https://boards.greenhouse.io/corrupt",
+        "https://boards.greenhouse.io/mismatched",
+        "https://boards.greenhouse.io/missing",
+    ]
+    assert result.result_files == result.written_files
+    assert [Path(path).stem for path in result.result_files] == [
+        "corrupt",
+        "mismatched",
+        "missing",
+    ]
+    assert result.resumed_files == []
+    assert result.written_count == 3
+    assert result.resumed_count == 0
 
 
 def test_normalize_raw_greenhouse_file_keeps_title_ai_signals_only(tmp_path) -> None:

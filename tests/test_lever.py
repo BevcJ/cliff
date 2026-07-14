@@ -214,7 +214,11 @@ def test_lever_client_gets_public_postings_endpoint() -> None:
 
     transport = httpx.MockTransport(handler)
     with httpx.Client(transport=transport) as http_client:
-        client = LeverClient(http_client=http_client)
+        client = LeverClient(
+            http_client=http_client,
+            request_delay_seconds=0,
+            max_retries=0,
+        )
         result = client.fetch_board("https://jobs.lever.co/acme-ai")
 
     assert len(requests) == 1
@@ -235,7 +239,11 @@ def test_lever_client_falls_back_to_eu_endpoint_on_global_404() -> None:
 
     transport = httpx.MockTransport(handler)
     with httpx.Client(transport=transport) as http_client:
-        client = LeverClient(http_client=http_client)
+        client = LeverClient(
+            http_client=http_client,
+            request_delay_seconds=0,
+            max_retries=0,
+        )
         result = client.fetch_board("acme-ai")
 
     assert [str(request.url) for request in requests] == [
@@ -261,9 +269,12 @@ def test_collect_lever_boards_writes_raw_response_and_manifest(tmp_path) -> None
         client=client,  # type: ignore[arg-type]
         data_dir=tmp_path,
         clock=lambda: next(timestamps),
+        collection_date="2026-06-20",
     )
 
     assert result.successful_count == 1
+    assert result.written_count == 1
+    assert result.resumed_count == 0
     assert result.board_count == 1
     assert result.error_count == 0
     raw_record = read_json(Path(result.result_files[0]))
@@ -281,7 +292,13 @@ def test_collect_lever_boards_writes_raw_response_and_manifest(tmp_path) -> None
         "matched_count": 2,
         "skipped_count": 2,
     }
-    assert read_json(result.manifest_path)["result_files"] == result.result_files
+    assert Path(result.result_files[0]) == (
+        tmp_path / "raw" / "ats" / "2026-06-20" / "lever" / "acme-ai.json"
+    )
+    manifest = read_json(result.manifest_path)
+    assert manifest["result_files"] == result.result_files
+    assert manifest["written_files"] == result.written_files
+    assert manifest["resumed_files"] == result.resumed_files
 
 
 def test_normalize_raw_lever_file_keeps_title_ai_signals_only(tmp_path) -> None:

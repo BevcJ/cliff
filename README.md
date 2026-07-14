@@ -9,38 +9,23 @@ uv sync --dev
 cp .env.example .env
 ```
 
-Set `SERPER_API_KEY` in `.env` before running collection-related commands. For job description extraction with Azure AI Foundry, set `JOB_DESCRIPTION_EXTRACTION_PROVIDER=azure`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT_NAME`, and `AZURE_OPENAI_API_KEY`. For company enrichment, set `COMPANY_ENRICHMENT_MODEL` to a web-search-capable Azure deployment such as `gpt-5.4-mini` and use the same Azure endpoint/key settings. For Postgres-backed inspection snapshots and shared review state, set `AI_HIRING_RADAR_DATABASE_URL` to the Supabase Postgres transaction-pooler connection string.
+Set `SERPER_API_KEY` in `.env` before running search collection or ATS commands that perform discovery. `ats collect PROVIDER` does not require Serper when explicit `--board-url` or `--boards-file` input is provided. For job description extraction with Azure AI Foundry, set `JOB_DESCRIPTION_EXTRACTION_PROVIDER=azure`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT_NAME`, and `AZURE_OPENAI_API_KEY`. For company enrichment, set `COMPANY_ENRICHMENT_MODEL` to a web-search-capable Azure deployment such as `gpt-5.4-mini` and use the same Azure endpoint/key settings. For Postgres-backed inspection snapshots and shared review state, set `AI_HIRING_RADAR_DATABASE_URL` to the Supabase Postgres transaction-pooler connection string.
 
 ## CLI
 
 ```bash
 uv run ai-hiring-radar --help
-uv run ai-hiring-radar discover-ashby --countries nl --dry-run
-uv run ai-hiring-radar collect-ashby --countries nl
-uv run ai-hiring-radar collect-ashby --countries nl --pages 3 --results-per-query 10
-uv run ai-hiring-radar collect-ashby --countries nl --discovery-depth broad
-uv run ai-hiring-radar collect-ashby --board-url https://jobs.ashbyhq.com/everai
-uv run ai-hiring-radar discover-greenhouse --countries nl --dry-run
-uv run ai-hiring-radar collect-greenhouse --countries nl
-uv run ai-hiring-radar collect-greenhouse --board-url https://boards.greenhouse.io/acme
-uv run ai-hiring-radar discover-lever --countries nl --dry-run
-uv run ai-hiring-radar collect-lever --countries nl
-uv run ai-hiring-radar collect-lever --board-url https://jobs.lever.co/insiderone
-uv run ai-hiring-radar discover-personio --countries nl --dry-run
-uv run ai-hiring-radar collect-personio --countries nl
-uv run ai-hiring-radar collect-personio --board-url https://acme.jobs.personio.com
-uv run ai-hiring-radar discover-recruitee --countries nl --dry-run
-uv run ai-hiring-radar collect-recruitee --countries nl
-uv run ai-hiring-radar collect-recruitee --board-url https://acme.recruitee.com
-uv run ai-hiring-radar discover-workable --countries nl --dry-run
-uv run ai-hiring-radar collect-workable --countries nl
-uv run ai-hiring-radar collect-workable --board-url https://apply.workable.com/workmotion
-uv run ai-hiring-radar discover-teamtailor --countries nl --dry-run
-uv run ai-hiring-radar collect-teamtailor --countries nl
-uv run ai-hiring-radar collect-teamtailor --board-url https://career.teamtailor.com
-uv run ai-hiring-radar discover-smartrecruiters --countries nl --dry-run
-uv run ai-hiring-radar collect-smartrecruiters --countries nl
-uv run ai-hiring-radar collect-smartrecruiters --board-url https://careers.smartrecruiters.com/acme
+uv run ai-hiring-radar collect --countries nl,uk,dk
+uv run ai-hiring-radar collect --countries nl,uk,dk --dry-run
+uv run ai-hiring-radar collect --countries nl --role "AI Product Manager"
+uv run ai-hiring-radar collect --countries nl,uk,dk --limit 10
+uv run ai-hiring-radar collect --countries nl --location-depth cities --dry-run
+uv run ai-hiring-radar collect --countries nl --location-depth cities --limit 20
+uv run ai-hiring-radar ats --help
+uv run ai-hiring-radar ats discover workable --countries nl --dry-run
+uv run ai-hiring-radar ats collect workable --countries nl
+uv run ai-hiring-radar ats collect workable --board-url https://apply.workable.com/workmotion
+uv run ai-hiring-radar ats collect workable --boards-file boards.jsonl --collection-date YYYY-MM-DD --resume
 uv run ai-hiring-radar debug-ashby-discovery --sample 5 --json
 uv run ai-hiring-radar process --date YYYY-MM-DD
 uv run ai-hiring-radar extract-job-descriptions --date YYYY-MM-DD --dry-run
@@ -62,7 +47,9 @@ ATS discovery commands use Serper Google Search to find public provider boards. 
 
 Use `--location-depth cities` on ATS discovery and collection commands for deeper coverage across configured city/location variants. Provider defaults use city-level discovery where supported.
 
-Processing reads raw ATS wrappers only, writes deduplicated candidates to `data/processed/job_candidates_YYYY-MM-DD.jsonl`, and aggregates parseable companies to `data/processed/companies_YYYY-MM-DD.jsonl`. Run `export` separately to write review files under `data/exports/`. ATS candidates may include provider-supplied job descriptions, but AI role filtering remains based on job titles.
+Supported ATS providers are `ashby`, `greenhouse`, `lever`, `personio`, `recruitee`, `smartrecruiters`, `teamtailor`, and `workable`. All use the same `ats discover PROVIDER` and `ats collect PROVIDER` interface. The optional `--language` setting affects Personio only and defaults to `en`; other providers ignore it. Use `ats discover --help` and `ats collect --help` for all options.
+
+Processing reads those raw wrappers, writes deduplicated candidates to `data/processed/job_candidates_YYYY-MM-DD.jsonl`, aggregates parseable companies to `data/processed/companies_YYYY-MM-DD.jsonl`, and exports review files under `data/exports/`. ATS candidates may include provider-supplied job descriptions, but AI role filtering remains based on job titles.
 
 Job description extraction is a separate step after `process`. It reads `data/processed/job_candidates_YYYY-MM-DD.jsonl`, calls a Pydantic AI structured-output extractor for candidates with useful ATS/job-description data, and writes compact records to `data/processed/job_description_extracts_YYYY-MM-DD.jsonl`. The extraction output includes model/prompt metadata and structured datapoints, but intentionally does not include full job description text, evidence snippets, raw LLM responses, or confidence scores. Progress is shown by default with `tqdm`; use `--no-progress` for quiet runs. Successful records are appended immediately, and reruns resume by skipping existing `job_id`s. Use `--countries nl,dk` to extract only jobs matching any selected country code before broadening to the full set later. Use `--restart` to clear existing extracts first. Use `--dry-run` to count processable candidates without model calls or output writes.
 
@@ -74,17 +61,7 @@ The included Azure AI Foundry configuration uses the Responses API endpoint `htt
 
 Company enrichment uses `COMPANY_ENRICHMENT_MODEL` directly as the Azure deployment name when `AZURE_OPENAI_ENDPOINT` is configured. The default is `gpt-5.4-mini`; if Azure rejects native web search for that deployment/API version, the command reports sampled model errors in the CLI summary and continues counting per-record failures.
 
-Ashby collection discovers public boards through exhaustive Serper query families such as `site:jobs.ashbyhq.com`, `site:jobs.ashbyhq.com "Netherlands"`, `site:jobs.ashbyhq.com "AI Engineer"`, `site:jobs.ashbyhq.com "LLM" "Netherlands"`, and `site:jobs.ashbyhq.com "AI Engineer" "Amsterdam"`. By default it uses configured city locations, broad AI terms, v1 role terms, 10 results per query, and 2 result pages. Use `--discovery-depth broad` or `--discovery-depth standard` to reduce query volume. It fetches each discovered board through Ashby's public hosted job-board endpoint, attempts per-job detail retrieval for full descriptions, and stores raw board responses under `data/raw/ats/YYYY-MM-DD/ashby/`. Detail retrieval failures are recorded per job and do not fail the whole board collection. Use `debug-ashby-discovery` to print a paste-friendly summary of discovery errors from the latest manifest.
-
-Lever collection uses the same discovery flow against `site:jobs.lever.co`, then fetches public postings from `https://api.lever.co/v0/postings/{site_slug}?mode=json` with an EU API fallback. Raw board responses are stored under `data/raw/ats/YYYY-MM-DD/lever/` and are included by `process` before dedupe and company aggregation.
-
-Recruitee collection uses the same discovery flow against `site:*.recruitee.com`, then fetches public offers from `https://{company_slug}.recruitee.com/api/offers/` plus per-offer details from `/api/offers/{offer_id}` for job descriptions when available. Raw board responses are stored under `data/raw/ats/YYYY-MM-DD/recruitee/` and are included by `process` before dedupe and company aggregation.
-
-Personio collection uses the same discovery flow against `site:*.jobs.personio.com`, then fetches the public XML feed from `https://{company_slug}.jobs.personio.com/xml?language=en`. Raw XML is stored in JSON wrappers under `data/raw/ats/YYYY-MM-DD/personio/` and is included by `process` before dedupe and company aggregation.
-
-Workable collection uses the same discovery flow against `site:apply.workable.com`, then fetches public hosted-careers JSON from `https://apply.workable.com/api/v3/accounts/{company_slug}/jobs` and per-job details from `https://apply.workable.com/api/v2/accounts/{company_slug}/jobs/{shortcode}`. Raw listing and detail responses are stored under `data/raw/ats/YYYY-MM-DD/workable/` and are included by `process` before dedupe and company aggregation.
-
-Teamtailor collection uses the same discovery flow against `site:*.teamtailor.com`, then fetches the public RSS feed from `https://{company_slug}.teamtailor.com/jobs.rss`. Raw RSS XML is stored in JSON wrappers under `data/raw/ats/YYYY-MM-DD/teamtailor/`, and RSS item descriptions, locations, departments, roles, divisions, remote status, publish dates, and job URLs are normalized before processing, dedupe, and company aggregation.
+ATS discovery uses provider-specific hosted-board URL patterns, while collection keeps each provider's request, pagination, fallback, and detail-fetch behavior inside its source module. Raw responses use the shared `data/raw/ats/YYYY-MM-DD/PROVIDER/` layout and are included by `process` before dedupe and company aggregation. See the [ATS Provider Integration Guide](ats_provider_integration_guide.md) and [ATS integration notes](ats_integration/README.md) for provider details. Use `debug-ashby-discovery` for a paste-friendly summary of Ashby discovery errors.
 
 ## Streamlit Cloud Deployment
 

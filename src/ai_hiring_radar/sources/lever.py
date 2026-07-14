@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -27,8 +28,16 @@ from ai_hiring_radar.sources.ats_discovery import (
     extract_ats_board_records,
     generate_ats_discovery_queries,
 )
+from ai_hiring_radar.sources.collection_resilience import (
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_REQUEST_DELAY_SECONDS,
+    ResilientHttpRequester,
+    is_valid_raw_ats_resume_file,
+    raw_ats_response_path,
+)
 from ai_hiring_radar.storage_json import (
     DEFAULT_DATA_DIR,
+    format_date,
     raw_ats_dir,
     write_json,
     write_raw_ats_response,
@@ -61,11 +70,21 @@ class LeverCollectionResult:
     manifest_path: Path
     board_count: int
     result_files: list[str]
+    written_files: list[str]
+    resumed_files: list[str]
     errors: list[dict[str, Any]]
 
     @property
     def successful_count(self) -> int:
         return len(self.result_files)
+
+    @property
+    def written_count(self) -> int:
+        return len(self.written_files)
+
+    @property
+    def resumed_count(self) -> int:
+        return len(self.resumed_files)
 
     @property
     def error_count(self) -> int:
@@ -220,9 +239,18 @@ class LeverClient:
         *,
         timeout: float = 30.0,
         http_client: httpx.Client | None = None,
+        request_delay_seconds: float = DEFAULT_REQUEST_DELAY_SECONDS,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         self._client = http_client or httpx.Client(timeout=timeout)
         self._owns_client = http_client is None
+        self._requester = ResilientHttpRequester(
+            http_client=self._client,
+            request_delay_seconds=request_delay_seconds,
+            max_retries=max_retries,
+            sleeper=sleeper,
+        )
 
     def fetch_board(self, board_url_or_slug: str) -> LeverFetchResult:
         board = normalize_lever_board(board_url_or_slug)
@@ -236,16 +264,15 @@ class LeverClient:
                 board.platform_company_slug,
                 api_base_url=api_base_url,
             )
-            response = self._client.get(
-                endpoint,
-                headers={"User-Agent": "ai-hiring-radar-lever-prototype"},
-            )
             try:
-                response.raise_for_status()
+                response = self._requester.get(
+                    endpoint,
+                    headers={"User-Agent": "ai-hiring-radar-lever-prototype"},
+                )
             except httpx.HTTPStatusError as exc:
                 if first_error is None:
                     first_error = exc
-                if response.status_code == 404 and api_region == "global":
+                if exc.response.status_code == 404 and api_region == "global":
                     continue
                 raise
 
@@ -343,6 +370,8 @@ def collect_lever_boards(
     client: LeverClient,
     data_dir: Path = DEFAULT_DATA_DIR,
     clock: Callable[[], str] = utc_now_iso,
+    collection_date: str | None = None,
+    resume: bool = True,
 ) -> LeverCollectionResult:
     boards_by_slug: dict[str, LeverBoard] = {}
     for value in board_urls_or_slugs:
@@ -351,11 +380,31 @@ def collect_lever_boards(
 
     boards = list(boards_by_slug.values())
     started_at = clock()
-    collection_date = started_at[:10]
+    effective_collection_date = format_date(
+        collection_date if collection_date is not None else started_at[:10]
+    )
     result_files: list[str] = []
+    written_files: list[str] = []
+    resumed_files: list[str] = []
     errors: list[dict[str, Any]] = []
 
     for board in boards:
+        resume_path = raw_ats_response_path(
+            platform_company_slug=board.platform_company_slug,
+            collection_date=effective_collection_date,
+            data_dir=data_dir,
+            platform=SourceName.LEVER.value,
+        )
+        if resume and is_valid_raw_ats_resume_file(
+            resume_path,
+            platform=SourceName.LEVER.value,
+            platform_company_slug=board.platform_company_slug,
+        ):
+            output_file = resume_path.as_posix()
+            result_files.append(output_file)
+            resumed_files.append(output_file)
+            continue
+
         try:
             fetch_result = client.fetch_board(board.board_url)
             raw_record = build_raw_lever_response_record(
@@ -368,12 +417,13 @@ def collect_lever_boards(
             path = write_raw_ats_response(
                 raw_record,
                 platform_company_slug=board.platform_company_slug,
-                collection_date=collection_date,
+                collection_date=effective_collection_date,
                 data_dir=data_dir,
                 platform=SourceName.LEVER.value,
             )
             output_file = path.as_posix()
             result_files.append(output_file)
+            written_files.append(output_file)
 
             if not _has_postings_response(fetch_result.response):
                 errors.append(
@@ -394,7 +444,7 @@ def collect_lever_boards(
 
     finished_at = clock()
     manifest_path = raw_ats_dir(
-        collection_date,
+        effective_collection_date,
         data_dir=data_dir,
         platform=SourceName.LEVER.value,
     ) / "manifest.json"
@@ -409,6 +459,8 @@ def collect_lever_boards(
             "finished_at": finished_at,
             "board_count": len(boards),
             "result_files": result_files,
+            "written_files": written_files,
+            "resumed_files": resumed_files,
             "errors": errors,
         },
     )
@@ -417,5 +469,7 @@ def collect_lever_boards(
         manifest_path=manifest_path,
         board_count=len(boards),
         result_files=result_files,
+        written_files=written_files,
+        resumed_files=resumed_files,
         errors=errors,
     )
