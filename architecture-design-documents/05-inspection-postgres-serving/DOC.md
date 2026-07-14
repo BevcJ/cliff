@@ -130,7 +130,8 @@ This keeps the DB schema focused on what the frontend needs: a company-centric r
 | `company` | Most recently seen company display name. |
 | `fit_status` | Manual fit status. |
 | `outreach_status` | Manual outreach status. |
-| `notes` | Manual notes. |
+| `notes` | General Notes; retains the original manual notes storage contract. |
+| `communication_history` | Editable free-text Communication History. |
 | `inspected_at` | First reviewed timestamp. |
 | `last_seen_collection_date` | Most recent collection date from a save. |
 | `created_at` | Row creation time. |

@@ -62,6 +62,7 @@ def _record(**overrides):  # noqa: ANN001, ANN202 - compact test fixture helper.
         "fit_status": "unreviewed",
         "outreach_status": "not_started",
         "review_notes": "",
+        "review_communication_history": "",
         "has_review_state": False,
         "job_count": 1,
         "job_description_extract_count": 1,
@@ -581,15 +582,21 @@ def _column_def(options: dict[str, object], field: str) -> dict[str, object]:
     raise AssertionError(f"Missing column definition for {field}")
 
 
-def test_company_grid_row_includes_hidden_stable_keys() -> None:
+def test_company_grid_row_includes_only_hidden_stable_keys() -> None:
     row = inspection_app._company_grid_row(
-        _record(company="Acme", company_key="acme ai", review_notes="Note"),
+        _record(
+            company="Acme",
+            company_key="acme ai",
+            review_notes="General note",
+            review_communication_history="Sent email",
+        ),
         0,
     )
 
     assert row["Grid Row Key"] == "acme ai"
     assert row["Company Key"] == "acme ai"
-    assert row["Review Notes"] == "Note"
+    assert "Review Notes" not in row
+    assert "Communication History" not in row
 
 
 def test_company_grid_options_makes_review_columns_editable_only_when_enabled() -> None:
@@ -630,7 +637,6 @@ def test_status_changes_from_grid_data_detects_changed_status_values() -> None:
             "company": "Acme",
             "fit_status": "possible_fit",
             "outreach_status": "not_started",
-            "notes": "",
         },
         {
             "grid_row_key": "beta ai",
@@ -638,7 +644,6 @@ def test_status_changes_from_grid_data_detects_changed_status_values() -> None:
             "company": "Beta",
             "fit_status": "best_fit",
             "outreach_status": "follow_up_needed",
-            "notes": "Existing note.",
         },
     ]
 
@@ -664,7 +669,7 @@ def test_save_table_status_changes_calls_upsert_with_expected_payload(monkeypatc
         calls.append({"payload": payload, "database_url": database_url})
         return payload
 
-    monkeypatch.setattr(inspection_app, "upsert_review_state", fake_upsert)
+    monkeypatch.setattr(inspection_app, "upsert_review_statuses", fake_upsert)
 
     inspection_app._save_table_status_changes(
         [
@@ -673,7 +678,6 @@ def test_save_table_status_changes_calls_upsert_with_expected_payload(monkeypatc
                 "company": "Acme AI",
                 "fit_status": "best_fit",
                 "outreach_status": "message_sent",
-                "notes": "Strong signal.",
             }
         ],
         database_url="postgres://test",
@@ -687,10 +691,95 @@ def test_save_table_status_changes_calls_upsert_with_expected_payload(monkeypatc
     assert payload["company_key"] == "acme ai"
     assert payload["fit_status"] == "best_fit"
     assert payload["outreach_status"] == "message_sent"
-    assert payload["notes"] == "Strong signal."
     assert payload["last_seen_collection_date"] == "2026-07-07"
     assert payload["last_updated_by"] == "Jakob"
-    assert payload["inspected_at"] is not None
+    assert "notes" not in payload
+    assert "communication_history" not in payload
+
+
+def test_render_review_form_saves_general_notes_and_communication_history(
+    monkeypatch,
+) -> None:
+    text_areas: list[dict[str, object]] = []
+    saved: list[dict[str, object]] = []
+
+    class FakeForm:
+        def __enter__(self) -> FakeForm:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    class FakeColumn:
+        def selectbox(self, label, options, *, index, **kwargs):  # noqa: ANN001, ANN202
+            return options[index]
+
+    class FakeStreamlit:
+        def __init__(self) -> None:
+            self.session_state: dict[str, object] = {}
+            self.rerun_called = False
+
+        def markdown(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            return None
+
+        def form(self, *args, **kwargs) -> FakeForm:  # noqa: ANN002, ANN003
+            return FakeForm()
+
+        def columns(self, count: int) -> list[FakeColumn]:
+            return [FakeColumn() for _ in range(count)]
+
+        def text_area(self, label, *, value, disabled, **kwargs):  # noqa: ANN001, ANN202
+            text_areas.append({"label": label, "value": value, "disabled": disabled})
+            return value
+
+        def form_submit_button(self, *args, **kwargs) -> bool:  # noqa: ANN002, ANN003
+            return True
+
+        def error(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            raise AssertionError(args)
+
+        def rerun(self) -> None:
+            self.rerun_called = True
+
+    fake_st = FakeStreamlit()
+    monkeypatch.setattr(inspection_app, "st", fake_st)
+    monkeypatch.setattr(
+        inspection_app,
+        "upsert_review_state",
+        lambda payload, *, database_url: saved.append(
+            {"payload": payload, "database_url": database_url}
+        ),
+    )
+
+    inspection_app._render_review_form(
+        _record(
+            fit_status="best_fit",
+            outreach_status="message_sent",
+            review_notes="Strong signal.",
+            review_communication_history="Message sent to CTO.",
+        ),
+        review_state_status=inspection_app.ReviewStateBackendStatus(
+            database_url="postgres://test"
+        ),
+        reviewer_name="Jakob",
+        collection_date="2026-07-07",
+        scope="inspect",
+    )
+
+    assert text_areas == [
+        {"label": "General Notes", "value": "Strong signal.", "disabled": False},
+        {
+            "label": "Communication History",
+            "value": "Message sent to CTO.",
+            "disabled": False,
+        },
+    ]
+    assert saved[0]["database_url"] == "postgres://test"
+    payload = saved[0]["payload"]
+    assert isinstance(payload, dict)
+    assert payload["notes"] == "Strong signal."
+    assert payload["communication_history"] == "Message sent to CTO."
+    assert fake_st.rerun_called is True
 
 
 def test_selected_record_from_grid_result_uses_clicked_row(monkeypatch) -> None:

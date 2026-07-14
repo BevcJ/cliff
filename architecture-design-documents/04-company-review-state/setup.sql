@@ -4,6 +4,7 @@ create table if not exists public.company_review_state (
   fit_status text not null default 'unreviewed',
   outreach_status text not null default 'not_started',
   notes text not null default '',
+  communication_history text not null default '',
   inspected_at timestamptz,
   last_seen_collection_date date,
   created_at timestamptz not null default now(),
@@ -16,6 +17,9 @@ create table if not exists public.company_review_state (
   constraint company_review_state_outreach_status_check
     check (outreach_status in ('not_started', 'message_sent', 'follow_up_needed', 'replied', 'closed'))
 );
+
+alter table public.company_review_state
+  add column if not exists communication_history text not null default '';
 
 create index if not exists company_review_state_fit_status_idx
   on public.company_review_state (fit_status);

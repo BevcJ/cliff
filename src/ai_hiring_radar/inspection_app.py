@@ -26,6 +26,7 @@ from ai_hiring_radar.review_state import (
     load_review_state,
     merge_review_state,
     upsert_review_state,
+    upsert_review_statuses,
 )
 from ai_hiring_radar.storage_json import DEFAULT_DATA_DIR, processed_dir
 
@@ -35,7 +36,7 @@ INSPECTION_DATABASE_URL_ENV = "AI_HIRING_RADAR_DATABASE_URL"
 INSPECTION_CONNECTION_SECRET = "supabase_inspection"
 WORKFLOW_VIEW_OPTIONS = ("Inspect", "Shortlist", "Outreach", "Rejected")
 EDITABLE_REVIEW_TABLE_COLUMNS = ("Fit Status", "Outreach Status")
-HIDDEN_GRID_COLUMNS = ("Grid Row Key", "Company Key", "Review Notes")
+HIDDEN_GRID_COLUMNS = ("Grid Row Key", "Company Key")
 COMPANIES_FILENAME_PATTERN = re.compile(r"companies_(\d{4}-\d{2}-\d{2})\.jsonl")
 INSPECTION_ARTIFACT_FILENAME_PATTERN = re.compile(
     r"inspection_companies_(\d{4}-\d{2}-\d{2})\.jsonl"
@@ -1192,7 +1193,6 @@ def _company_grid_row(record: dict[str, Any], index: int) -> dict[str, Any]:
     row = _company_table_row(record)
     row["Grid Row Key"] = _record_grid_key(record, index)
     row["Company Key"] = str(record.get("company_key") or "").strip()
-    row["Review Notes"] = str(record.get("review_notes") or "")
     return row
 
 
@@ -1286,7 +1286,6 @@ def _status_changes_from_grid_data(
                 "company": str(record.get("company") or ""),
                 "fit_status": fit_status,
                 "outreach_status": outreach_status,
-                "notes": str(record.get("review_notes") or ""),
             }
         )
     return changes
@@ -1362,16 +1361,17 @@ def _save_table_status_changes(
     collection_date: str,
 ) -> None:
     for change in changes:
-        payload = build_review_state_payload(
-            company_key=str(change.get("company_key") or ""),
-            company=str(change.get("company") or ""),
-            fit_status=str(change.get("fit_status") or ""),
-            outreach_status=str(change.get("outreach_status") or ""),
-            notes=str(change.get("notes") or ""),
-            collection_date=collection_date,
-            reviewer_name=reviewer_name,
+        upsert_review_statuses(
+            {
+                "company_key": str(change.get("company_key") or ""),
+                "company": str(change.get("company") or ""),
+                "fit_status": str(change.get("fit_status") or ""),
+                "outreach_status": str(change.get("outreach_status") or ""),
+                "last_seen_collection_date": collection_date,
+                "last_updated_by": reviewer_name,
+            },
+            database_url=database_url,
         )
-        upsert_review_state(payload, database_url=database_url)
 
 
 def _render_company_detail(
@@ -1504,14 +1504,21 @@ def _render_review_form(
             disabled=disabled,
             key=f"{form_key}-outreach-status",
         )
-        notes = st.text_area(
-            "Notes",
+        general_notes = st.text_area(
+            "General Notes",
             value=str(record.get("review_notes") or ""),
             disabled=disabled,
             height=88,
-            key=f"{form_key}-notes",
+            key=f"{form_key}-general-notes",
         )
-        submitted = st.form_submit_button("Save notes/status", disabled=disabled)
+        communication_history = st.text_area(
+            "Communication History",
+            value=str(record.get("review_communication_history") or ""),
+            disabled=disabled,
+            height=120,
+            key=f"{form_key}-communication-history",
+        )
+        submitted = st.form_submit_button("Save review state", disabled=disabled)
 
     if not submitted:
         return
@@ -1526,7 +1533,8 @@ def _render_review_form(
             company=str(record.get("company") or ""),
             fit_status=str(fit_status),
             outreach_status=str(outreach_status),
-            notes=notes,
+            notes=general_notes,
+            communication_history=communication_history,
             collection_date=collection_date,
             reviewer_name=reviewer_name,
         )

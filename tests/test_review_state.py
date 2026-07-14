@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +17,7 @@ def test_default_review_state_returns_expected_defaults() -> None:
         "fit_status": "unreviewed",
         "outreach_status": "not_started",
         "notes": "",
+        "communication_history": "",
         "inspected_at": None,
         "last_seen_collection_date": None,
         "created_at": None,
@@ -34,6 +36,7 @@ def test_merge_review_state_overlays_persisted_state_by_company_key() -> None:
             "fit_status": "best_fit",
             "outreach_status": "message_sent",
             "notes": "Strong signal.",
+            "communication_history": "Message sent to CTO.",
             "inspected_at": "2026-07-07T10:30:00+00:00",
             "last_seen_collection_date": "2026-07-07",
             "last_updated_at": "2026-07-07T10:35:00+00:00",
@@ -46,6 +49,7 @@ def test_merge_review_state_overlays_persisted_state_by_company_key() -> None:
     assert merged[0]["fit_status"] == "best_fit"
     assert merged[0]["outreach_status"] == "message_sent"
     assert merged[0]["review_notes"] == "Strong signal."
+    assert merged[0]["review_communication_history"] == "Message sent to CTO."
     assert merged[0]["inspected_at"] == "2026-07-07T10:30:00+00:00"
     assert merged[0]["last_reviewed_at"] == "2026-07-07T10:35:00+00:00"
     assert merged[0]["last_reviewed_by"] == "Jakob"
@@ -53,6 +57,7 @@ def test_merge_review_state_overlays_persisted_state_by_company_key() -> None:
     assert merged[1]["fit_status"] == "unreviewed"
     assert merged[1]["outreach_status"] == "not_started"
     assert merged[1]["review_notes"] == ""
+    assert merged[1]["review_communication_history"] == ""
     assert merged[1]["has_review_state"] is False
 
 
@@ -74,6 +79,7 @@ def test_build_review_state_payload_sets_inspected_at_for_reviewed_status() -> N
         fit_status="possible_fit",
         outreach_status="follow_up_needed",
         notes=" Needs follow-up. ",
+        communication_history=" Sent message on LinkedIn. ",
         collection_date="2026-07-07",
         reviewer_name=" Jakob ",
         now=now,
@@ -85,6 +91,7 @@ def test_build_review_state_payload_sets_inspected_at_for_reviewed_status() -> N
         "fit_status": "possible_fit",
         "outreach_status": "follow_up_needed",
         "notes": "Needs follow-up.",
+        "communication_history": "Sent message on LinkedIn.",
         "inspected_at": now,
         "last_seen_collection_date": "2026-07-07",
         "last_updated_by": "Jakob",
@@ -98,6 +105,7 @@ def test_build_review_state_payload_leaves_inspected_at_empty_for_unreviewed() -
         fit_status="unreviewed",
         outreach_status="not_started",
         notes=None,
+        communication_history=None,
         collection_date="2026-07-07",
         reviewer_name="",
     )
@@ -114,6 +122,7 @@ def test_build_review_state_payload_rejects_invalid_status_values() -> None:
             fit_status="good",
             outreach_status="not_started",
             notes="",
+            communication_history="",
             collection_date="2026-07-07",
             reviewer_name=None,
         )
@@ -125,6 +134,7 @@ def test_build_review_state_payload_rejects_invalid_status_values() -> None:
             fit_status="best_fit",
             outreach_status="emailed",
             notes="",
+            communication_history="",
             collection_date="2026-07-07",
             reviewer_name=None,
         )
@@ -138,6 +148,7 @@ def test_build_review_state_payload_requires_company_key() -> None:
             fit_status="best_fit",
             outreach_status="message_sent",
             notes="",
+            communication_history="",
             collection_date="2026-07-07",
             reviewer_name=None,
         )
@@ -175,6 +186,7 @@ def test_load_review_state_fetches_unique_company_keys_in_one_batch(monkeypatch)
                     "fit_status": "best_fit",
                     "outreach_status": "message_sent",
                     "notes": "Strong signal.",
+                    "communication_history": "Message sent to CTO.",
                     "inspected_at": loaded_at,
                     "last_seen_collection_date": loaded_at.date(),
                     "last_updated_at": loaded_at,
@@ -207,3 +219,111 @@ def test_load_review_state_fetches_unique_company_keys_in_one_batch(monkeypatch)
     assert calls[1]["params"] == (["acme ai", "beta ai"],)
     assert loaded["acme ai"]["inspected_at"] == "2026-07-07T10:30:00+00:00"
     assert loaded["acme ai"]["last_seen_collection_date"] == "2026-07-07"
+    assert loaded["acme ai"]["communication_history"] == "Message sent to CTO."
+
+
+def _capture_single_row_query(
+    monkeypatch: pytest.MonkeyPatch,
+    returned_row: dict[str, object],
+) -> dict[str, object]:
+    captured: dict[str, object] = {}
+
+    class FakeCursor:
+        def __enter__(self) -> FakeCursor:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def execute(self, query: str, params: dict[str, object]) -> FakeCursor:
+            captured["query"] = query
+            captured["params"] = params
+            return self
+
+        def fetchone(self) -> dict[str, object]:
+            return returned_row
+
+    class FakeConnection:
+        def __enter__(self) -> FakeConnection:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def cursor(self) -> FakeCursor:
+            return FakeCursor()
+
+    monkeypatch.setattr(
+        review_state.psycopg,
+        "connect",
+        lambda *args, **kwargs: FakeConnection(),
+    )
+    return captured
+
+
+def _persisted_review_row() -> dict[str, object]:
+    return {
+        "company_key": "acme ai",
+        "company": "Acme AI",
+        "fit_status": "best_fit",
+        "outreach_status": "message_sent",
+        "notes": "Strong signal.",
+        "communication_history": "Message sent to CTO.",
+        "inspected_at": None,
+        "last_seen_collection_date": "2026-07-07",
+        "created_at": None,
+        "last_updated_at": None,
+        "last_updated_by": "Jakob",
+    }
+
+
+def test_upsert_review_state_writes_both_note_fields(monkeypatch) -> None:
+    captured = _capture_single_row_query(monkeypatch, _persisted_review_row())
+
+    review_state.upsert_review_state(
+        _persisted_review_row(),
+        database_url="postgres://test",
+    )
+
+    query = str(captured["query"])
+    params = captured["params"]
+    assert isinstance(params, dict)
+    assert "notes = excluded.notes" in query
+    assert "communication_history = excluded.communication_history" in query
+    assert params["notes"] == "Strong signal."
+    assert params["communication_history"] == "Message sent to CTO."
+
+
+def test_upsert_review_statuses_does_not_write_note_fields(monkeypatch) -> None:
+    captured = _capture_single_row_query(monkeypatch, _persisted_review_row())
+
+    review_state.upsert_review_statuses(
+        _persisted_review_row(),
+        database_url="postgres://test",
+    )
+
+    write_query = str(captured["query"]).split("returning", 1)[0]
+    params = captured["params"]
+    assert isinstance(params, dict)
+    assert "notes" not in write_query
+    assert "communication_history" not in write_query
+    assert "notes" not in params
+    assert "communication_history" not in params
+
+
+def test_communication_history_schema_migration_is_idempotent() -> None:
+    repository_root = Path(__file__).parents[1]
+    setup_sql = (
+        repository_root
+        / "architecture-design-documents/04-company-review-state/setup.sql"
+    ).read_text()
+    migration_sql = (
+        repository_root
+        / "architecture-design-documents/04-company-review-state/migrate_add_communication_history.sql"
+    ).read_text()
+
+    assert "communication_history text not null default ''" in setup_sql
+    assert (
+        "add column if not exists communication_history text not null default ''"
+        in migration_sql
+    )

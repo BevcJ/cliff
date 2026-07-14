@@ -19,11 +19,11 @@ This design adds Supabase Postgres as the shared state store for current company
 1. Extend the existing Streamlit inspection UI instead of creating a separate app.
 2. Let users mark company fit as `unreviewed`, `best_fit`, `possible_fit`, or `not_interesting`.
 3. Let users mark outreach status as `not_started`, `message_sent`, `follow_up_needed`, `replied`, or `closed`.
-4. Let users save free-text notes per company.
+4. Let users save separate free-text General Notes and Communication History per company.
 5. Persist review state in Supabase Postgres so all Streamlit Cloud users see the same state.
 6. Keep generated company, candidate, enrichment, and inspection artifact JSONL files read-only.
 7. Add UI tabs for the review workflow: `Inspect`, `Shortlist`, `Outreach`, and `Rejected`.
-8. Keep v1 simple: no authentication, no event history, no CRM sync, and no per-user ownership.
+8. Keep v1 simple: no authentication, no structured or append-only event history, no CRM sync, and no per-user ownership.
 9. Provide a degraded read-only mode when Supabase is unavailable or not configured.
 
 ## Non-Goals
@@ -31,7 +31,7 @@ This design adds Supabase Postgres as the shared state store for current company
 1. User authentication or authorization inside the app.
 2. Supabase Auth integration.
 3. Row-level multi-tenant isolation.
-4. Audit/event history of every change.
+4. Structured or append-only audit/event history of every change.
 5. CRM functionality such as accounts, contacts, tasks, reminders, or sequences.
 6. Automatic outreach message generation.
 7. Writing review state back into `companies_YYYY-MM-DD.jsonl` or `inspection_companies_YYYY-MM-DD.jsonl`.
@@ -50,9 +50,10 @@ Functional requirements:
    - `fit_status = "unreviewed"`
    - `outreach_status = "not_started"`
    - `notes = ""`
+   - `communication_history = ""`
 5. The main company table must show fit status and outreach status.
 6. The sidebar must support filtering by fit status and outreach status.
-7. The selected company detail panel must contain a save form for fit status, outreach status, and notes.
+7. The selected company detail panel must contain a save form for fit status, outreach status, General Notes, and Communication History.
 8. Saving review state must use an atomic upsert by `company_key`.
 9. Changing `fit_status` from `unreviewed` to any reviewed status must set `inspected_at` if it was previously empty.
 10. Saving must update `last_seen_collection_date`, `last_updated_at`, and `last_updated_by`.
@@ -115,7 +116,7 @@ Supabase Postgres company_review_state
   -> review state map
 
 generated inspection records + review state map
-  -> merged Streamlit records            # NEW defaults + persisted fit/outreach/notes
+  -> merged Streamlit records            # NEW defaults + persisted fit/outreach/text fields
   -> tabs, filters, table, detail form
 ```
 
@@ -144,6 +145,7 @@ create table company_review_state (
   fit_status text not null default 'unreviewed',
   outreach_status text not null default 'not_started',
   notes text not null default '',
+  communication_history text not null default '',
   inspected_at timestamptz,
   last_seen_collection_date date,
   created_at timestamptz not null default now(),
@@ -169,12 +171,13 @@ Schema rationale:
 1. `company_key` is the primary key because it is already the inspection join key and is stable across collection dates for the same normalized company name.
 2. `company` stores the most recently seen display name for readability and admin debugging.
 3. `fit_status` and `outreach_status` are separate because target suitability and communication progress are different dimensions.
-4. `notes` defaults to an empty string so UI code does not need to distinguish null notes from empty notes.
-5. `inspected_at` captures the first manual review moment without requiring a separate event table.
-6. `last_seen_collection_date` allows future stale-state cleanup and tells operators when a reviewed company last appeared in the generated pipeline.
-7. `last_updated_by` is free text in v1 because authentication is explicitly out of scope.
-8. Check constraints enforce valid states at the database boundary.
-9. Status indexes support filter queries and future dashboard views.
+4. `notes` remains the backing column for General Notes so existing content requires no migration or compatibility alias.
+5. `communication_history` is a second editable text value and defaults to an empty string. It is not an append-only event log.
+6. `inspected_at` captures the first manual review moment without requiring a separate event table.
+7. `last_seen_collection_date` allows future stale-state cleanup and tells operators when a reviewed company last appeared in the generated pipeline.
+8. `last_updated_by` is free text in v1 because authentication is explicitly out of scope.
+9. Check constraints enforce valid states at the database boundary.
+10. Status indexes support filter queries and future dashboard views.
 
 ### Python Review State Shape
 
@@ -187,6 +190,7 @@ Representative in-memory review state:
     "fit_status": "best_fit",
     "outreach_status": "message_sent",
     "notes": "Strong AI delivery signal; good CTO contact.",
+    "communication_history": "2026-07-14: Sent a LinkedIn message to the CTO.",
     "inspected_at": "2026-07-07T10:30:00+00:00",
     "last_seen_collection_date": "2026-07-07",
     "last_updated_at": "2026-07-07T10:35:00+00:00",
@@ -203,6 +207,7 @@ Every rendered inspection record gains these fields after merging review state:
     "fit_status": "unreviewed",
     "outreach_status": "not_started",
     "review_notes": "",
+    "review_communication_history": "",
     "inspected_at": None,
     "last_reviewed_at": None,
     "last_reviewed_by": None,
@@ -287,6 +292,13 @@ def upsert_review_state(
     database_url: str,
 ) -> dict[str, Any]:
     ...
+
+def upsert_review_statuses(
+    review_state: dict[str, Any],
+    *,
+    database_url: str,
+) -> dict[str, Any]:
+    ...
 ```
 
 ### Streamlit App
@@ -322,7 +334,7 @@ Normal render flow:
 8. App renders summary metrics, sidebar filters, and workflow tabs.
 9. User selects a company.
 10. App renders company details and review-state save form.
-11. User changes fit/outreach/notes and clicks save.
+11. User changes fit/outreach/General Notes/Communication History and clicks save.
 12. App calls `upsert_review_state(...)`.
 13. App shows success message and reruns/refreshes merged state.
 
@@ -335,6 +347,7 @@ insert into company_review_state (
   fit_status,
   outreach_status,
   notes,
+  communication_history,
   inspected_at,
   last_seen_collection_date,
   last_updated_at,
@@ -345,6 +358,7 @@ insert into company_review_state (
   %(fit_status)s,
   %(outreach_status)s,
   %(notes)s,
+  %(communication_history)s,
   %(inspected_at)s,
   %(last_seen_collection_date)s,
   now(),
@@ -355,6 +369,7 @@ on conflict (company_key) do update set
   fit_status = excluded.fit_status,
   outreach_status = excluded.outreach_status,
   notes = excluded.notes,
+  communication_history = excluded.communication_history,
   inspected_at = coalesce(company_review_state.inspected_at, excluded.inspected_at),
   last_seen_collection_date = excluded.last_seen_collection_date,
   last_updated_at = now(),
@@ -453,27 +468,30 @@ Integration-style tests with monkeypatching:
 
 1. App can render merged records when review-state loader succeeds.
 2. App renders read-only mode when review-state loader raises.
-3. Save handler calls upsert helper with expected payload.
+3. Full save handler calls the review-state upsert with both text fields.
+4. Inline grid edits call the status-only upsert and cannot overwrite either text field.
 
 Manual verification:
 
 1. Create Supabase table with SQL from this design.
 2. Configure Streamlit secrets locally or in Streamlit Cloud.
 3. Launch the app for a processed date.
-4. Mark a company `best_fit` and `message_sent` with notes.
-5. Refresh the app and confirm status persists.
-6. Open the app in another browser/session and confirm status is shared.
-7. Disable/break the database URL and confirm the app remains read-only instead of failing to load generated data.
+4. Mark a company `best_fit` and `message_sent`, then save both General Notes and Communication History.
+5. Refresh the app and confirm statuses and both text fields persist.
+6. Change a status in the grid and confirm neither text field changes.
+7. Open the app in another browser/session and confirm state is shared.
+8. Disable/break the database URL and confirm the app remains read-only instead of failing to load generated data.
 
 ## Rollout
 
-1. Create the Supabase `company_review_state` table.
-2. Create or configure a least-privilege Postgres user for the app.
-3. Add the Supabase transaction-pooler connection string to Streamlit Cloud secrets.
-4. Deploy code with review-state support.
-5. Verify the app loads in read-write mode.
-6. Ask operators to use `Reviewer name` before saving state.
-7. Keep existing generated JSONL and compact inspection artifact deployment flow unchanged.
+1. For a new deployment, create the Supabase `company_review_state` table with `setup.sql`.
+2. For an existing deployment, apply `migrate_add_communication_history.sql` before deploying application code.
+3. Create or configure a least-privilege Postgres user for the app.
+4. Add the Supabase transaction-pooler connection string to Streamlit Cloud secrets.
+5. Deploy code with review-state support.
+6. Verify the app loads in read-write mode.
+7. Ask operators to use `Reviewer name` before saving state.
+8. Keep existing generated JSONL and compact inspection artifact deployment flow unchanged.
 
 Compatibility:
 
@@ -481,6 +499,7 @@ Compatibility:
 2. Existing compact inspection artifacts work immediately.
 3. Companies without persisted review state display default values.
 4. Existing CSV/Markdown exports remain unchanged in v1.
+5. Existing `notes` values appear unchanged as General Notes; Communication History starts empty.
 
 Rollback:
 
@@ -605,4 +624,4 @@ None. V1 decisions are locked:
 5. `Reviewer name` is optional free text.
 6. Generated pipeline data remains read-only.
 7. The app degrades to read-only generated inspection when Supabase is unavailable.
-8. Last-write-wins is acceptable for concurrent edits in v1.
+8. Last-write-wins is acceptable for concurrent full-form edits in v1; inline status edits do not rewrite either text field.
