@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "./database.types";
 
@@ -9,7 +9,10 @@ if (!supabaseUrl || !supabasePublishableKey) {
   throw new Error("Missing VITE_SUPABASE_URL or VITE_SUPABASE_PUBLISHABLE_KEY");
 }
 
-export const supabase = createClient<Database>(supabaseUrl, supabasePublishableKey, {
+const configuredSupabaseUrl: string = supabaseUrl;
+const configuredSupabasePublishableKey: string = supabasePublishableKey;
+
+export const supabase = createClient<Database>(configuredSupabaseUrl, configuredSupabasePublishableKey, {
   auth: {
     autoRefreshToken: true,
     detectSessionInUrl: true,
@@ -17,3 +20,20 @@ export const supabase = createClient<Database>(supabaseUrl, supabasePublishableK
     persistSession: true,
   },
 });
+
+let passwordSetupClientSequence = 0;
+
+// Each one-time link gets an isolated in-memory session that cannot be replaced
+// by persisted sessions, another tab, or a concurrent password link.
+export function createPasswordSetupClient(): SupabaseClient<Database> {
+  passwordSetupClientSequence += 1;
+  return createClient<Database>(configuredSupabaseUrl, configuredSupabasePublishableKey, {
+    auth: {
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      flowType: "pkce",
+      persistSession: false,
+      storageKey: `ai-hiring-radar-password-setup-${passwordSetupClientSequence}`,
+    },
+  });
+}

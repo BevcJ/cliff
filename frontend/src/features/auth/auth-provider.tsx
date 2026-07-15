@@ -7,7 +7,7 @@ type AuthContextValue = {
   loading: boolean;
   session: Session | null;
   user: User | null;
-  signOut: () => Promise<void>;
+  signOut: () => Promise<string | null>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -41,7 +41,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       session,
       user: session?.user ?? null,
       signOut: async () => {
-        await supabase.auth.signOut();
+        try {
+          const { error } = await supabase.auth.signOut();
+          return error?.message ?? null;
+        } catch (error) {
+          return error instanceof Error ? error.message : "Unable to sign out. Please try again.";
+        }
       },
     }),
     [loading, session],

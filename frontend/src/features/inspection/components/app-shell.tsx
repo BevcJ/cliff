@@ -1,4 +1,5 @@
 import { LogOut } from "lucide-react";
+import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { Button } from "../../../components/ui/button";
@@ -15,6 +16,8 @@ export function AppShell({ collectionDate, collections, children }: AppShellProp
   const { signOut, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
 
   function changeCollection(nextCollectionDate: string) {
     const nextSearch = new URLSearchParams(location.search);
@@ -22,6 +25,14 @@ export function AppShell({ collectionDate, collections, children }: AppShellProp
     nextSearch.delete("page");
     const search = nextSearch.toString();
     navigate(`/inspection/${nextCollectionDate}${search ? `?${search}` : ""}`);
+  }
+
+  async function handleSignOut() {
+    setSigningOut(true);
+    setSignOutError(null);
+    const nextError = await signOut();
+    setSignOutError(nextError);
+    setSigningOut(false);
   }
 
   return (
@@ -56,9 +67,14 @@ export function AppShell({ collectionDate, collections, children }: AppShellProp
               ))}
             </select>
             <div className="max-w-64 truncate text-sm text-muted-foreground">{user?.email}</div>
-            <Button size="sm" variant="outline" onClick={() => void signOut()}>
+            {signOutError ? (
+              <p role="alert" className="max-w-64 text-xs text-destructive">
+                {signOutError}
+              </p>
+            ) : null}
+            <Button disabled={signingOut} size="sm" variant="outline" onClick={() => void handleSignOut()}>
               <LogOut className="mr-2 h-4 w-4" />
-              Sign out
+              {signingOut ? "Signing out..." : "Sign out"}
             </Button>
           </div>
         </div>
