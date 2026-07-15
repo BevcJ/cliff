@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Design Document: Last Outreach Follow-up</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #fbfaf7; --fg: #1f2933; --line: #d8d1c3; --panel: #fff; --accent: #2f6f73; }
+    body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: var(--bg); color: var(--fg); line-height: 1.55; }
+    main { width: min(1050px, calc(100% - 32px)); margin: 0 auto; padding: 40px 0 72px; }
+    header { display: grid; grid-template-columns: 1.4fr .6fr; gap: 24px; border-bottom: 2px solid var(--line); padding-bottom: 28px; }
+    h1 { font-size: clamp(2.2rem, 5vw, 4.2rem); letter-spacing: -.05em; line-height: 1; }
+    h2 { margin-top: 40px; }
+    h3 { margin-top: 28px; }
+    table { width: 100%; border-collapse: collapse; background: var(--panel); }
+    th, td { border: 1px solid var(--line); padding: 9px 11px; text-align: left; vertical-align: top; }
+    code, pre { background: color-mix(in srgb, var(--panel) 75%, var(--accent)); border-radius: 5px; }
+    code { padding: .1em .3em; }
+    pre { padding: 16px; overflow-x: auto; }
+    article { border-left: 4px solid var(--accent); padding: 4px 16px; margin: 18px 0; }
+    @media (max-width: 720px) { header { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<main data-design-doc-version="1">
+  <header id="top">
+    <div>
+      <p>Canonical Design Document</p>
+      <h1 id="title">Last Outreach Follow-up</h1>
+      <p>Add a manually maintained company-level outreach date and convert its age into an accessible table reminder.</p>
+    </div>
+    <table aria-label="Document metadata">
+      <tbody>
+        <tr><th>Status</th><td>Accepted</td></tr>
+        <tr><th>Author</th><td>OpenCode</td></tr>
+        <tr><th>Created</th><td>2026-07-14</td></tr>
+        <tr><th>Last Updated</th><td>2026-07-14</td></tr>
+        <tr><th>Epic</th><td>-</td></tr>
+        <tr><th>Related</th><td>04 Company Review State; 09 Outreach Status Workflow</td></tr>
+      </tbody>
+    </table>
+  </header>
+
+  <section id="overview">
+    <h2>1. Overview</h2>
+    <h3 id="problem-statement">1.1 Problem Statement</h3>
+    <p>The inspection UI stores a current outreach status but no date for the most recent outbound message. Existing review timestamps change for unrelated edits and cannot determine when a follow-up is due.</p>
+    <h3 id="proposed-solution">1.2 Proposed Solution</h3>
+    <p>Store a nullable <code>last_outreach_date</code> on each company review-state row. Operators edit Fit Status, Outreach Status, and Last Outreach directly in the company table. Company Detail remains the editor for General Notes and Communication History only.</p>
+    <h3 id="terminology">1.3 Terminology</h3>
+    <table>
+      <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+      <tbody>
+        <tr><td>Last Outreach</td><td>Calendar date of the latest manually recorded outbound message for a company.</td></tr>
+        <tr><td>Reminder status</td><td><code>message_sent</code> or <code>follow_up_sent</code>; statuses for which age is actionable.</td></tr>
+        <tr><td>Elapsed days</td><td>Current server calendar date minus Last Outreach.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="architecture">
+    <h2>2. Architecture</h2>
+    <h3 id="current-flow">2.1 Current Flow</h3>
+    <pre><code>company_review_state.outreach_status
+  -&gt; merge_review_state()
+  -&gt; company table and read-only detail facts</code></pre>
+    <h3 id="proposed-flow">2.2 Proposed Flow</h3>
+    <pre><code>company_review_state.last_outreach_date (nullable DATE)
+  -&gt; load and serialize as YYYY-MM-DD
+  -&gt; merge into generated company record
+  -&gt; table date editor for writes
+  -&gt; pure age calculation at table render
+  -&gt; pinned Follow-up indicator + editable Last Outreach column</code></pre>
+    <p>The active grid uses server-authoritative synchronization after reruns. Status edits use <code>upsert_review_statuses()</code>, date edits use <code>upsert_last_outreach_date()</code>, and notes/history edits use <code>upsert_review_notes()</code>. Each path updates only its owned fields.</p>
+  </section>
+
+  <section id="impacted-modules">
+    <h2>3. Impacted Modules</h2>
+    <table>
+      <thead><tr><th>Module</th><th>Change</th></tr></thead>
+      <tbody>
+        <tr><td><code>review_state.py</code></td><td>Load, normalize, validate, merge, and partial-upsert statuses, dates, and notes/history separately.</td></tr>
+        <tr><td><code>inspection_app.py</code></td><td>Editable table date column, server-wins sync, date display, notes-only detail form, and 3/5-day reminder calculation.</td></tr>
+        <tr><td><code>company_review_state</code></td><td>Add nullable <code>last_outreach_date DATE</code>.</td></tr>
+        <tr><td>Generated snapshots</td><td>No change; manual review state remains separate.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="edge-cases">
+    <h2>4. Edge Cases &amp; Behaviour</h2>
+    <article id="ec-1"><h3>EC-1: Missing date</h3><p>A reminder status with no date displays a red "Date missing" indicator.</p></article>
+    <article id="ec-2"><h3>EC-2: Boundary days</h3><p>Days 0-3 are green, days 4-5 are yellow, and day 6 onward is red.</p></article>
+    <article id="ec-3"><h3>EC-3: Inactive status</h3><p><code>not_started</code>, <code>active_conversation</code>, closed, and lost statuses show no age indicator even if a date remains stored.</p></article>
+    <article id="ec-4"><h3>EC-4: Future date</h3><p>The table date editor prevents selection after today, and persistence validation rejects future dates.</p></article>
+    <article id="ec-5"><h3>EC-5: Partial saves</h3><p>Status edits preserve Last Outreach and notes/history. Date edits preserve statuses and notes/history.</p></article>
+    <article id="ec-6"><h3>EC-6: Stale browser rows</h3><p>The grid uses <code>server_wins</code> synchronization so Postgres-backed reruns replace old client row data.</p></article>
+  </section>
+
+  <section id="user-stories">
+    <h2>5. User Stories / Journeys</h2>
+    <article id="us-1"><h3>US-1</h3><p>As an operator, I enter or clear a company's Last Outreach date in the table so the shared state reflects the latest outbound message.</p><p><strong>Tests:</strong> <code>test_table_review_changes_from_grid_data_detects_last_outreach_set_and_clear</code>, <code>test_upsert_last_outreach_date_writes_only_date_field</code>.</p></article>
+    <article id="us-2"><h3>US-2</h3><p>As an operator, I see a green, yellow, or red reminder at the start of each actionable row so I know when to follow up.</p><p><strong>Tests:</strong> <code>test_follow_up_indicator_uses_three_and_five_day_boundaries</code>.</p></article>
+    <article id="us-3"><h3>US-3</h3><p>As an operator, I see missing outreach dates flagged while conversations and terminal leads remain unflagged.</p><p><strong>Tests:</strong> <code>test_follow_up_indicator_flags_missing_dates_and_suppresses_inactive_statuses</code>.</p></article>
+    <article id="us-4"><h3>US-4</h3><p>As an operator, I can edit table fields and notes independently without losing data from the other editing surface.</p><p><strong>Tests:</strong> <code>test_save_table_review_changes_calls_status_and_date_upserts</code>, <code>test_upsert_review_notes_writes_only_note_fields</code>.</p></article>
+  </section>
+
+  <section id="decisions-made">
+    <h2>6. Decisions Made</h2>
+    <article id="decision-1"><h3>D-1: Company-level current state</h3><p>Store one date per company because the existing workflow and review-state primary key are company-level. Contact-level event history is deferred.</p></article>
+    <article id="decision-2"><h3>D-2: SQL DATE</h3><p>Use a calendar date rather than a timestamp because entry and reminders operate in whole days and do not require send-time precision.</p></article>
+    <article id="decision-3"><h3>D-3: Table entry</h3><p>Make Fit Status, Outreach Status, and Last Outreach editable only in the table. This keeps row triage fast and avoids conflicting table/detail controls.</p></article>
+    <article id="decision-4"><h3>D-4: Text plus color</h3><p>Use an icon and label together so reminder meaning is not communicated by color alone.</p></article>
+    <article id="decision-5"><h3>D-5: New status mapping</h3><p>Apply age reminders to <code>message_sent</code> and <code>follow_up_sent</code>. The newer <code>active_conversation</code> status replaces the old replied state and suppresses reminders.</p></article>
+  </section>
+
+  <section id="upgrade-paths">
+    <h2>7. Upgrade Paths</h2>
+    <article id="upgrade-path-1"><h3>7.1 Configurable thresholds</h3><p>Move the named 3-day and 5-day constants into deployment configuration if different teams need different cadences.</p></article>
+    <article id="upgrade-path-2"><h3>7.2 Outreach event history</h3><p>Add a contact/message event table and derive Last Outreach when recipient-level history and auditing become requirements.</p></article>
+    <article id="upgrade-path-3"><h3>7.3 Notifications</h3><p>Add scheduled email or in-app notifications after the visual workflow has proven useful.</p></article>
+  </section>
+
+  <section id="changelog">
+    <h2>8. Changelog</h2>
+    <p>2026-07-14 - OpenCode - Accepted design and implementation contract.</p>
+  </section>
+</main>
+</body>
+</html>

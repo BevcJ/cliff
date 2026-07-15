@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass, replace
+from datetime import date, datetime
 from html import escape
 import re
 import os
@@ -22,10 +23,10 @@ from ai_hiring_radar.inspection_db import (
 from ai_hiring_radar.review_state import (
     FIT_STATUS_OPTIONS,
     OUTREACH_STATUS_OPTIONS,
-    build_review_state_payload,
     load_review_state,
     merge_review_state,
-    upsert_review_state,
+    upsert_last_outreach_date,
+    upsert_review_notes,
     upsert_review_statuses,
 )
 from ai_hiring_radar.storage_json import DEFAULT_DATA_DIR, processed_dir
@@ -34,7 +35,17 @@ from ai_hiring_radar.storage_json import DEFAULT_DATA_DIR, processed_dir
 PARETO_LOGO_URL = "https://www.pareto.si/wp-content/uploads/2023/03/logo_90.png"
 INSPECTION_DATABASE_URL_ENV = "AI_HIRING_RADAR_DATABASE_URL"
 INSPECTION_CONNECTION_SECRET = "supabase_inspection"
-WORKFLOW_VIEW_OPTIONS = ("Inspect", "Shortlist", "Outreach", "Rejected")
+WORKFLOW_VIEW_OPTIONS = ("Inspect", "Shortlist", "Outreach", "Closed", "Rejected")
+ACTIVE_OUTREACH_STATUSES = {
+    "message_sent",
+    "follow_up_sent",
+    "active_conversation",
+}
+SUITABLE_FIT_STATUSES = {"best_fit", "possible_fit"}
+FOLLOW_UP_REMINDER_STATUSES = {"message_sent", "follow_up_sent"}
+FOLLOW_UP_RECENT_MAX_DAYS = 3
+FOLLOW_UP_DUE_SOON_MAX_DAYS = 5
+LOST_OUTREACH_STATUSES = {"lost_client_rejection", "lost_no_response"}
 EDITABLE_REVIEW_TABLE_COLUMNS = ("Fit Status", "Outreach Status")
 HIDDEN_GRID_COLUMNS = ("Grid Row Key", "Company Key")
 COMPANIES_FILENAME_PATTERN = re.compile(r"companies_(\d{4}-\d{2}-\d{2})\.jsonl")
@@ -86,7 +97,6 @@ FILTER_DEFAULTS = {
     "filter_ai_tech_forward_signals": [],
     "filter_fit_statuses": [],
     "filter_outreach_statuses": [],
-    "filter_needs_action": "Any",
     "filter_has_contacts": "Any",
     "filter_has_job_description_extracts": "Any",
     "filter_has_company_enrichment": "Any",
@@ -830,12 +840,6 @@ def _sidebar_filters(records: list[dict[str, Any]]) -> dict[str, Any]:
             list(OUTREACH_STATUS_OPTIONS),
             key="filter_outreach_statuses",
         ),
-        "needs_action": st.sidebar.selectbox(
-            "Needs action",
-            BOOLEAN_FILTER_OPTIONS,
-            key="filter_needs_action",
-            help="Suitable companies with outreach not started or follow-up needed.",
-        ),
         "has_contacts": st.sidebar.selectbox(
             "Has contacts", BOOLEAN_FILTER_OPTIONS, key="filter_has_contacts"
         ),
@@ -903,8 +907,6 @@ def _apply_filters(
             "outreach_status",
             filters.get("outreach_statuses", []),
         ):
-            continue
-        if not _matches_needs_action_filter(record, filters.get("needs_action", "Any")):
             continue
         if not _matches_boolean_filter(record, "has_contacts", filters["has_contacts"]):
             continue
@@ -1091,33 +1093,52 @@ def _workflow_label(workflow_view: str, records: list[dict[str, Any]]) -> str:
 def _workflow_records(
     records: list[dict[str, Any]], workflow_view: str
 ) -> list[dict[str, Any]]:
+    if workflow_view == "Inspect":
+        return _inspect_records(records)
     if workflow_view == "Shortlist":
         return _shortlist_records(records)
     if workflow_view == "Outreach":
         return _outreach_records(records)
+    if workflow_view == "Closed":
+        return _closed_records(records)
     if workflow_view == "Rejected":
         return _rejected_records(records)
-    return records
+    return _inspect_records(records)
+
+
+def _workflow_stage(record: dict[str, Any]) -> str:
+    fit_status = record.get("fit_status")
+    outreach_status = record.get("outreach_status")
+    if outreach_status == "closed":
+        return "Closed"
+    if outreach_status in LOST_OUTREACH_STATUSES or fit_status == "not_interesting":
+        return "Rejected"
+    if fit_status in SUITABLE_FIT_STATUSES:
+        if outreach_status in ACTIVE_OUTREACH_STATUSES:
+            return "Outreach"
+        if outreach_status == "not_started":
+            return "Shortlist"
+    return "Inspect"
+
+
+def _inspect_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [record for record in records if _workflow_stage(record) == "Inspect"]
 
 
 def _shortlist_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        record
-        for record in records
-        if record.get("fit_status") in {"best_fit", "possible_fit"}
-    ]
+    return [record for record in records if _workflow_stage(record) == "Shortlist"]
 
 
 def _outreach_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        record
-        for record in _shortlist_records(records)
-        if record.get("outreach_status") != "not_started"
-    ]
+    return [record for record in records if _workflow_stage(record) == "Outreach"]
+
+
+def _closed_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [record for record in records if _workflow_stage(record) == "Closed"]
 
 
 def _rejected_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [record for record in records if record.get("fit_status") == "not_interesting"]
+    return [record for record in records if _workflow_stage(record) == "Rejected"]
 
 
 def _render_company_table(
@@ -1143,16 +1164,18 @@ def _render_company_table(
         data_return_mode=DataReturnMode.AS_INPUT,
         update_on=["cellValueChanged", "selectionChanged"],
         allow_unsafe_jscode=False,
+        server_sync_strategy="server_wins",
         theme="streamlit",
         key=key,
         show_search=False,
         show_download_button=False,
     )
     st.caption(
-        "Click a company row to inspect it below. Edit Fit or Outreach directly in the table."
+        "Click a company row to inspect it below. Edit Fit, Outreach, and Last "
+        "Outreach directly in the table."
     )
     selected_record = _selected_record_from_grid_result(records, grid_result)
-    changes = _status_changes_from_grid_data(
+    changes = _table_review_changes_from_grid_data(
         records,
         _grid_data_rows(_grid_result_data(grid_result)),
     )
@@ -1163,7 +1186,7 @@ def _render_company_table(
         return selected_record
 
     try:
-        _save_table_status_changes(
+        _save_table_review_changes(
             changes,
             database_url=review_state_status.database_url,
             reviewer_name=reviewer_name,
@@ -1177,7 +1200,7 @@ def _render_company_table(
         "grid_row_key",
         changes[-1]["company_key"],
     )
-    count_label = "status update" if len(changes) == 1 else "status updates"
+    count_label = "table update" if len(changes) == 1 else "table updates"
     st.session_state["review_state_save_message"] = (
         f"Saved {len(changes)} {count_label}."
     )
@@ -1186,11 +1209,17 @@ def _render_company_table(
 
 
 def _company_grid_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [_company_grid_row(record, index) for index, record in enumerate(records)]
+    today = date.today()
+    return [
+        _company_grid_row(record, index, today=today)
+        for index, record in enumerate(records)
+    ]
 
 
-def _company_grid_row(record: dict[str, Any], index: int) -> dict[str, Any]:
-    row = _company_table_row(record)
+def _company_grid_row(
+    record: dict[str, Any], index: int, *, today: date | None = None
+) -> dict[str, Any]:
+    row = _company_table_row(record, today=today)
     row["Grid Row Key"] = _record_grid_key(record, index)
     row["Company Key"] = str(record.get("company_key") or "").strip()
     return row
@@ -1222,6 +1251,7 @@ def _company_grid_options(
     )
     for column in HIDDEN_GRID_COLUMNS:
         builder.configure_column(column, hide=True)
+    builder.configure_column("Follow-up", pinned="left", width=130)
     builder.configure_column("Company", pinned="left", width=190)
     builder.configure_column(
         "Fit Status",
@@ -1239,6 +1269,15 @@ def _company_grid_options(
         singleClickEdit=True,
         width=150,
     )
+    builder.configure_column(
+        "Last Outreach",
+        editable=editable,
+        cellDataType="dateString",
+        cellEditor="agDateStringCellEditor",
+        cellEditorParams={"max": date.today().isoformat()},
+        singleClickEdit=True,
+        width=130,
+    )
     builder.configure_column("Jobs", type=["numericColumn"], width=72)
     options = builder.build()
     options["rowSelection"] = "single"
@@ -1254,7 +1293,7 @@ def _pre_selected_grid_rows(grid_rows: list[dict[str, Any]]) -> list[int]:
     return [0] if grid_rows else []
 
 
-def _status_changes_from_grid_data(
+def _table_review_changes_from_grid_data(
     records: list[dict[str, Any]],
     grid_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -1272,11 +1311,20 @@ def _status_changes_from_grid_data(
             continue
         current_fit_status = str(record.get("fit_status") or "unreviewed")
         current_outreach_status = str(record.get("outreach_status") or "not_started")
+        current_last_outreach_date = _date_value(record.get("last_outreach_date"))
         fit_status = str(row.get("Fit Status") or current_fit_status)
         outreach_status = str(row.get("Outreach Status") or current_outreach_status)
+        last_outreach_date = current_last_outreach_date
+        if "Last Outreach" in row:
+            last_outreach_date = _grid_last_outreach_date(row.get("Last Outreach"))
+        status_changed = (
+            fit_status != current_fit_status
+            or outreach_status != current_outreach_status
+        )
+        last_outreach_date_changed = last_outreach_date != current_last_outreach_date
         if (
-            fit_status == current_fit_status
-            and outreach_status == current_outreach_status
+            not status_changed
+            and not last_outreach_date_changed
         ):
             continue
         changes.append(
@@ -1286,6 +1334,9 @@ def _status_changes_from_grid_data(
                 "company": str(record.get("company") or ""),
                 "fit_status": fit_status,
                 "outreach_status": outreach_status,
+                "last_outreach_date": last_outreach_date,
+                "status_changed": status_changed,
+                "last_outreach_date_changed": last_outreach_date_changed,
             }
         )
     return changes
@@ -1353,7 +1404,7 @@ def _record_for_grid_key(
     return None
 
 
-def _save_table_status_changes(
+def _save_table_review_changes(
     changes: list[dict[str, Any]],
     *,
     database_url: str,
@@ -1361,17 +1412,29 @@ def _save_table_status_changes(
     collection_date: str,
 ) -> None:
     for change in changes:
-        upsert_review_statuses(
-            {
-                "company_key": str(change.get("company_key") or ""),
-                "company": str(change.get("company") or ""),
-                "fit_status": str(change.get("fit_status") or ""),
-                "outreach_status": str(change.get("outreach_status") or ""),
-                "last_seen_collection_date": collection_date,
-                "last_updated_by": reviewer_name,
-            },
-            database_url=database_url,
-        )
+        if change.get("status_changed"):
+            upsert_review_statuses(
+                {
+                    "company_key": str(change.get("company_key") or ""),
+                    "company": str(change.get("company") or ""),
+                    "fit_status": str(change.get("fit_status") or ""),
+                    "outreach_status": str(change.get("outreach_status") or ""),
+                    "last_seen_collection_date": collection_date,
+                    "last_updated_by": reviewer_name,
+                },
+                database_url=database_url,
+            )
+        if change.get("last_outreach_date_changed"):
+            upsert_last_outreach_date(
+                {
+                    "company_key": str(change.get("company_key") or ""),
+                    "company": str(change.get("company") or ""),
+                    "last_outreach_date": change.get("last_outreach_date"),
+                    "last_seen_collection_date": collection_date,
+                    "last_updated_by": reviewer_name,
+                },
+                database_url=database_url,
+            )
 
 
 def _render_company_detail(
@@ -1450,6 +1513,7 @@ def _render_company_facts(
     _write_fact(right, "AI tech-forward signal", record.get("ai_tech_forward_signal"))
     _write_fact(right, "Fit status", record.get("fit_status"))
     _write_fact(right, "Outreach status", record.get("outreach_status"))
+    _write_fact(right, "Last Outreach", record.get("last_outreach_date"))
     _write_fact(right, "Review status", record.get("review_status"))
     if record.get("company_description"):
         st.markdown("#### Description")
@@ -1486,24 +1550,7 @@ def _render_review_form(
 
     disabled = disabled_reason is not None
     form_key = f"review-state-{_widget_key_part(scope, company_key, record.get('company'))}"
-    fit_options = list(FIT_STATUS_OPTIONS)
-    outreach_options = list(OUTREACH_STATUS_OPTIONS)
     with st.form(form_key, border=False):
-        status_columns = st.columns(2)
-        fit_status = status_columns[0].selectbox(
-            "Fit status",
-            fit_options,
-            index=_option_index(fit_options, record.get("fit_status")),
-            disabled=disabled,
-            key=f"{form_key}-fit-status",
-        )
-        outreach_status = status_columns[1].selectbox(
-            "Outreach status",
-            outreach_options,
-            index=_option_index(outreach_options, record.get("outreach_status")),
-            disabled=disabled,
-            key=f"{form_key}-outreach-status",
-        )
         general_notes = st.text_area(
             "General Notes",
             value=str(record.get("review_notes") or ""),
@@ -1528,17 +1575,17 @@ def _render_review_form(
         return
 
     try:
-        payload = build_review_state_payload(
-            company_key=company_key,
-            company=str(record.get("company") or ""),
-            fit_status=str(fit_status),
-            outreach_status=str(outreach_status),
-            notes=general_notes,
-            communication_history=communication_history,
-            collection_date=collection_date,
-            reviewer_name=reviewer_name,
+        upsert_review_notes(
+            {
+                "company_key": company_key,
+                "company": str(record.get("company") or ""),
+                "notes": general_notes,
+                "communication_history": communication_history,
+                "last_seen_collection_date": collection_date,
+                "last_updated_by": reviewer_name,
+            },
+            database_url=review_state_status.database_url,
         )
-        upsert_review_state(payload, database_url=review_state_status.database_url)
     except Exception as exc:
         st.error(f"Failed to save review state: {exc}")
         return
@@ -1678,11 +1725,64 @@ def _url_label(url: str) -> str:
     return f"{label[:93]}..."
 
 
-def _company_table_row(record: dict[str, Any]) -> dict[str, Any]:
+def _follow_up_indicator(
+    record: dict[str, Any], *, today: date | None = None
+) -> str:
+    if record.get("outreach_status") not in FOLLOW_UP_REMINDER_STATUSES:
+        return ""
+
+    last_outreach_date = _date_value(record.get("last_outreach_date"))
+    if last_outreach_date is None:
+        return "🔴 Date missing"
+
+    elapsed_days = ((today or date.today()) - last_outreach_date).days
+    if elapsed_days < 0:
+        return "🔴 Invalid date"
+    if elapsed_days <= FOLLOW_UP_RECENT_MAX_DAYS:
+        return "🟢 Fresh"
+    if elapsed_days <= FOLLOW_UP_DUE_SOON_MAX_DAYS:
+        return "🟡 Due soon"
+    return "🔴 Follow up"
+
+
+def _date_value(value: object | None) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        return None
+    try:
+        return date.fromisoformat(cleaned)
+    except ValueError:
+        return None
+
+
+def _grid_last_outreach_date(value: object | None) -> date | str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    cleaned = str(value).strip()
+    if not cleaned or cleaned.casefold() in {"nan", "nat", "none"}:
+        return None
+    parsed = _date_value(cleaned)
+    return parsed if parsed is not None else cleaned
+
+
+def _company_table_row(
+    record: dict[str, Any], *, today: date | None = None
+) -> dict[str, Any]:
+    last_outreach_date = _date_value(record.get("last_outreach_date"))
     return {
+        "Follow-up": _follow_up_indicator(record, today=today),
         "Company": record.get("company"),
         "Fit Status": record.get("fit_status"),
         "Outreach Status": record.get("outreach_status"),
+        "Last Outreach": last_outreach_date.isoformat() if last_outreach_date else "",
         "Countries": _join(record.get("countries")),
         "Role Classification": record.get("role_classification"),
         "Jobs": record.get("job_count"),
@@ -1762,6 +1862,7 @@ def _widget_key_part(*values: object | None) -> str:
 
 def _company_table_column_config() -> dict[str, Any]:
     return {
+        "Follow-up": st.column_config.TextColumn("Follow-up", width=116),
         "Company": st.column_config.TextColumn("Company", width=170),
         "Fit Status": st.column_config.SelectboxColumn(
             "Fit",
@@ -1772,6 +1873,11 @@ def _company_table_column_config() -> dict[str, Any]:
             "Outreach",
             options=list(OUTREACH_STATUS_OPTIONS),
             width=132,
+        ),
+        "Last Outreach": st.column_config.DateColumn(
+            "Last Outreach",
+            format="YYYY-MM-DD",
+            width=108,
         ),
         "Countries": st.column_config.TextColumn("Countries", width=112),
         "Role Classification": st.column_config.TextColumn("Role", width=145),
@@ -1790,9 +1896,11 @@ def _company_table_column_config() -> dict[str, Any]:
 
 def _company_table_column_order() -> tuple[str, ...]:
     return (
+        "Follow-up",
         "Company",
         "Fit Status",
         "Outreach Status",
+        "Last Outreach",
         "Countries",
         "Role Classification",
         "Jobs",
@@ -1874,19 +1982,6 @@ def _matches_boolean_filter(record: dict[str, Any], field: str, selected_value: 
         return True
     value = bool(record.get(field))
     return value is (selected_value == "Yes")
-
-
-def _matches_needs_action_filter(record: dict[str, Any], selected_value: str) -> bool:
-    if selected_value == "Any":
-        return True
-    needs_action = _is_needs_action_record(record)
-    return needs_action is (selected_value == "Yes")
-
-
-def _is_needs_action_record(record: dict[str, Any]) -> bool:
-    return record.get("fit_status") in {"best_fit", "possible_fit"} and record.get(
-        "outreach_status"
-    ) in {"not_started", "follow_up_needed"}
 
 
 def _matches_job_count_filter(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -27,7 +28,6 @@ def _filters(**overrides):  # noqa: ANN001, ANN202 - compact test fixture helper
         "ai_tech_forward_signals": [],
         "fit_statuses": [],
         "outreach_statuses": [],
-        "needs_action": "Any",
         "has_contacts": "Any",
         "has_job_description_extracts": "Any",
         "has_company_enrichment": "Any",
@@ -63,6 +63,7 @@ def _record(**overrides):  # noqa: ANN001, ANN202 - compact test fixture helper.
         "outreach_status": "not_started",
         "review_notes": "",
         "review_communication_history": "",
+        "last_outreach_date": None,
         "has_review_state": False,
         "job_count": 1,
         "job_description_extract_count": 1,
@@ -377,30 +378,6 @@ def test_apply_filters_supports_outreach_status_filter() -> None:
     assert [record["company"] for record in filtered] == ["Sent"]
 
 
-def test_apply_filters_supports_needs_action_filter() -> None:
-    records = [
-        _record(company="Best not started", fit_status="best_fit", outreach_status="not_started"),
-        _record(
-            company="Possible follow-up",
-            fit_status="possible_fit",
-            outreach_status="follow_up_needed",
-        ),
-        _record(
-            company="Rejected follow-up",
-            fit_status="not_interesting",
-            outreach_status="follow_up_needed",
-        ),
-        _record(company="Best sent", fit_status="best_fit", outreach_status="message_sent"),
-    ]
-
-    filtered = inspection_app._apply_filters(records, _filters(needs_action="Yes"))
-
-    assert [record["company"] for record in filtered] == [
-        "Best not started",
-        "Possible follow-up",
-    ]
-
-
 def test_apply_filters_supports_missing_source_filter_values() -> None:
     records = [
         _record(company="With source", sources=["lever"]),
@@ -490,10 +467,22 @@ def test_sort_records_supports_jobs_ascending() -> None:
     assert [record["company"] for record in sorted_records] == ["Acme", "Beta"]
 
 
-def test_shortlist_records_returns_suitable_companies_only() -> None:
+def test_shortlist_records_returns_suitable_not_started_companies_only() -> None:
     records = [
         _record(company="Best", fit_status="best_fit"),
         _record(company="Possible", fit_status="possible_fit"),
+        _record(company="Sent", fit_status="best_fit", outreach_status="message_sent"),
+        _record(
+            company="Conversation",
+            fit_status="possible_fit",
+            outreach_status="active_conversation",
+        ),
+        _record(company="Closed", fit_status="best_fit", outreach_status="closed"),
+        _record(
+            company="Lost",
+            fit_status="possible_fit",
+            outreach_status="lost_no_response",
+        ),
         _record(company="Rejected", fit_status="not_interesting"),
         _record(company="Unreviewed", fit_status="unreviewed"),
     ]
@@ -503,56 +492,152 @@ def test_shortlist_records_returns_suitable_companies_only() -> None:
     assert [record["company"] for record in shortlisted] == ["Best", "Possible"]
 
 
-def test_outreach_records_excludes_not_started() -> None:
+def test_outreach_records_returns_only_active_suitable_leads() -> None:
     records = [
         _record(company="Not started", fit_status="best_fit", outreach_status="not_started"),
         _record(company="Sent", fit_status="best_fit", outreach_status="message_sent"),
         _record(
             company="Follow-up",
             fit_status="possible_fit",
-            outreach_status="follow_up_needed",
+            outreach_status="follow_up_sent",
+        ),
+        _record(
+            company="Conversation",
+            fit_status="best_fit",
+            outreach_status="active_conversation",
+        ),
+        _record(company="Closed", fit_status="best_fit", outreach_status="closed"),
+        _record(
+            company="Lost",
+            fit_status="possible_fit",
+            outreach_status="lost_client_rejection",
         ),
         _record(company="Rejected", fit_status="not_interesting", outreach_status="message_sent"),
     ]
 
     outreach = inspection_app._outreach_records(records)
 
-    assert [record["company"] for record in outreach] == ["Sent", "Follow-up"]
+    assert [record["company"] for record in outreach] == [
+        "Sent",
+        "Follow-up",
+        "Conversation",
+    ]
 
 
-def test_rejected_records_returns_not_interesting_only() -> None:
+def test_closed_records_returns_closed_regardless_of_fit_status() -> None:
     records = [
-        _record(company="Best", fit_status="best_fit"),
+        _record(company="Best", fit_status="best_fit", outreach_status="message_sent"),
+        _record(company="Closed", fit_status="best_fit", outreach_status="closed"),
+        _record(
+            company="Closed rejected fit",
+            fit_status="not_interesting",
+            outreach_status="closed",
+        ),
+    ]
+
+    closed = inspection_app._closed_records(records)
+
+    assert [record["company"] for record in closed] == ["Closed", "Closed rejected fit"]
+
+
+def test_rejected_records_includes_fit_rejections_and_outreach_losses() -> None:
+    records = [
         _record(company="Rejected", fit_status="not_interesting"),
+        _record(
+            company="Client rejection",
+            fit_status="best_fit",
+            outreach_status="lost_client_rejection",
+        ),
+        _record(
+            company="No response",
+            fit_status="possible_fit",
+            outreach_status="lost_no_response",
+        ),
+        _record(
+            company="Closed wins",
+            fit_status="not_interesting",
+            outreach_status="closed",
+        ),
     ]
 
     rejected = inspection_app._rejected_records(records)
 
-    assert [record["company"] for record in rejected] == ["Rejected"]
+    assert [record["company"] for record in rejected] == [
+        "Rejected",
+        "Client rejection",
+        "No response",
+    ]
 
 
 def test_workflow_records_routes_to_selected_workflow() -> None:
     records = [
+        _record(company="Unreviewed", fit_status="unreviewed", outreach_status="not_started"),
         _record(company="Best", fit_status="best_fit", outreach_status="not_started"),
         _record(company="Sent", fit_status="possible_fit", outreach_status="message_sent"),
+        _record(company="Closed", fit_status="best_fit", outreach_status="closed"),
         _record(company="Rejected", fit_status="not_interesting"),
     ]
 
     assert [record["company"] for record in inspection_app._workflow_records(records, "Inspect")] == [
-        "Best",
-        "Sent",
-        "Rejected",
+        "Unreviewed"
     ]
     assert [record["company"] for record in inspection_app._workflow_records(records, "Shortlist")] == [
-        "Best",
-        "Sent",
+        "Best"
     ]
     assert [record["company"] for record in inspection_app._workflow_records(records, "Outreach")] == [
         "Sent"
     ]
+    assert [record["company"] for record in inspection_app._workflow_records(records, "Closed")] == [
+        "Closed"
+    ]
     assert [record["company"] for record in inspection_app._workflow_records(records, "Rejected")] == [
         "Rejected"
     ]
+
+
+def test_workflow_records_moves_company_between_exclusive_stages() -> None:
+    unreviewed = _record(
+        company="Acme",
+        fit_status="unreviewed",
+        outreach_status="not_started",
+    )
+    shortlisted = {**unreviewed, "fit_status": "best_fit"}
+    outreach = {**shortlisted, "outreach_status": "message_sent"}
+
+    assert inspection_app._workflow_records([unreviewed], "Inspect") == [unreviewed]
+    assert inspection_app._workflow_records([shortlisted], "Inspect") == []
+    assert inspection_app._workflow_records([shortlisted], "Shortlist") == [shortlisted]
+    assert inspection_app._workflow_records([outreach], "Shortlist") == []
+    assert inspection_app._workflow_records([outreach], "Outreach") == [outreach]
+
+
+def test_workflow_records_assigns_each_company_to_one_workflow_stage() -> None:
+    records = [
+        _record(company="Inspect", fit_status="unreviewed"),
+        _record(company="Shortlist", fit_status="best_fit"),
+        _record(company="Outreach", fit_status="possible_fit", outreach_status="follow_up_sent"),
+        _record(company="Closed", fit_status="not_interesting", outreach_status="closed"),
+        _record(company="Rejected fit", fit_status="not_interesting"),
+        _record(company="Rejected lost", fit_status="best_fit", outreach_status="lost_no_response"),
+    ]
+
+    memberships = {
+        record["company"]: [
+            workflow_view
+            for workflow_view in inspection_app.WORKFLOW_VIEW_OPTIONS
+            if record in inspection_app._workflow_records(records, workflow_view)
+        ]
+        for record in records
+    }
+
+    assert memberships == {
+        "Inspect": ["Inspect"],
+        "Shortlist": ["Shortlist"],
+        "Outreach": ["Outreach"],
+        "Closed": ["Closed"],
+        "Rejected fit": ["Rejected"],
+        "Rejected lost": ["Rejected"],
+    }
 
 
 def test_company_table_column_order_hides_jd_extracts() -> None:
@@ -562,15 +647,68 @@ def test_company_table_column_order_hides_jd_extracts() -> None:
     assert "JD Extracts" not in column_order
     assert "Fit Status" in column_order
     assert "Outreach Status" in column_order
+    assert column_order[:2] == ("Follow-up", "Company")
+    assert "Last Outreach" in column_order
 
 
 def test_company_table_row_includes_review_state_columns() -> None:
     row = inspection_app._company_table_row(
-        _record(fit_status="best_fit", outreach_status="message_sent")
+        _record(
+            fit_status="best_fit",
+            outreach_status="message_sent",
+            last_outreach_date="2026-07-07",
+        ),
+        today=date(2026, 7, 10),
     )
 
     assert row["Fit Status"] == "best_fit"
     assert row["Outreach Status"] == "message_sent"
+    assert row["Last Outreach"] == "2026-07-07"
+    assert row["Follow-up"] == "🟢 Fresh"
+
+
+def test_follow_up_indicator_uses_three_and_five_day_boundaries() -> None:
+    today = date(2026, 7, 10)
+
+    assert inspection_app._follow_up_indicator(
+        _record(outreach_status="message_sent", last_outreach_date="2026-07-07"),
+        today=today,
+    ) == "🟢 Fresh"
+    assert inspection_app._follow_up_indicator(
+        _record(outreach_status="message_sent", last_outreach_date="2026-07-06"),
+        today=today,
+    ) == "🟡 Due soon"
+    assert inspection_app._follow_up_indicator(
+        _record(outreach_status="follow_up_sent", last_outreach_date="2026-07-05"),
+        today=today,
+    ) == "🟡 Due soon"
+    assert inspection_app._follow_up_indicator(
+        _record(outreach_status="follow_up_sent", last_outreach_date="2026-07-04"),
+        today=today,
+    ) == "🔴 Follow up"
+
+
+def test_follow_up_indicator_flags_missing_dates_and_suppresses_inactive_statuses() -> None:
+    today = date(2026, 7, 10)
+
+    assert inspection_app._follow_up_indicator(
+        _record(outreach_status="message_sent", last_outreach_date=None),
+        today=today,
+    ) == "🔴 Date missing"
+    for outreach_status in (
+        "not_started",
+        "active_conversation",
+        "closed",
+        "lost_client_rejection",
+        "lost_no_response",
+    ):
+        assert inspection_app._follow_up_indicator(
+            _record(
+                outreach_status=outreach_status,
+                last_outreach_date="2026-07-01",
+            ),
+            today=today,
+        ) == ""
 
 
 def _column_def(options: dict[str, object], field: str) -> dict[str, object]:
@@ -607,13 +745,46 @@ def test_company_grid_options_makes_review_columns_editable_only_when_enabled() 
 
     assert _column_def(editable_options, "Fit Status")["editable"] is True
     assert _column_def(editable_options, "Outreach Status")["editable"] is True
+    assert _column_def(editable_options, "Outreach Status")["cellEditorParams"] == {
+        "values": list(inspection_app.OUTREACH_STATUS_OPTIONS)
+    }
     assert _column_def(editable_options, "Company").get("editable") is not True
+    assert _column_def(editable_options, "Follow-up")["pinned"] == "left"
+    assert _column_def(editable_options, "Company")["pinned"] == "left"
+    last_outreach_column = _column_def(editable_options, "Last Outreach")
+    assert last_outreach_column["editable"] is True
+    assert last_outreach_column["cellDataType"] == "dateString"
+    assert last_outreach_column["cellEditor"] == "agDateStringCellEditor"
+    assert last_outreach_column["cellEditorParams"] == {"max": date.today().isoformat()}
     assert _column_def(readonly_options, "Fit Status")["editable"] is False
     assert _column_def(readonly_options, "Outreach Status")["editable"] is False
+    assert _column_def(readonly_options, "Last Outreach")["editable"] is False
     assert _column_def(editable_options, "Grid Row Key")["hide"] is True
 
 
-def test_status_changes_from_grid_data_detects_changed_status_values() -> None:
+def test_render_company_table_uses_server_wins_sync(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_aggrid(dataframe, **kwargs):  # noqa: ANN001, ANN202
+        captured.update(kwargs)
+        return SimpleNamespace(data=dataframe.to_dict("records"), selected_rows=[])
+
+    monkeypatch.setattr(inspection_app, "AgGrid", fake_aggrid)
+    monkeypatch.setattr(inspection_app.st, "caption", lambda *args, **kwargs: None)
+    monkeypatch.setitem(inspection_app.st.session_state, "selected_company_key", "")
+
+    selected = inspection_app._render_company_table(
+        [_record()],
+        review_state_status=inspection_app.ReviewStateBackendStatus(database_url=None),
+        reviewer_name="Jakob",
+        collection_date="2026-07-07",
+    )
+
+    assert selected is not None
+    assert captured["server_sync_strategy"] == "server_wins"
+
+
+def test_table_review_changes_from_grid_data_detects_changed_status_values() -> None:
     records = [
         _record(company="Acme", company_key="acme ai"),
         _record(
@@ -626,9 +797,9 @@ def test_status_changes_from_grid_data_detects_changed_status_values() -> None:
     ]
     grid_rows = inspection_app._company_grid_rows(records)
     grid_rows[0]["Fit Status"] = "possible_fit"
-    grid_rows[1]["Outreach Status"] = "follow_up_needed"
+    grid_rows[1]["Outreach Status"] = "follow_up_sent"
 
-    changes = inspection_app._status_changes_from_grid_data(records, grid_rows)
+    changes = inspection_app._table_review_changes_from_grid_data(records, grid_rows)
 
     assert changes == [
         {
@@ -637,47 +808,101 @@ def test_status_changes_from_grid_data_detects_changed_status_values() -> None:
             "company": "Acme",
             "fit_status": "possible_fit",
             "outreach_status": "not_started",
+            "last_outreach_date": None,
+            "status_changed": True,
+            "last_outreach_date_changed": False,
         },
         {
             "grid_row_key": "beta ai",
             "company_key": "beta ai",
             "company": "Beta",
             "fit_status": "best_fit",
-            "outreach_status": "follow_up_needed",
+            "outreach_status": "follow_up_sent",
+            "last_outreach_date": None,
+            "status_changed": True,
+            "last_outreach_date_changed": False,
         },
     ]
 
 
-def test_status_changes_from_grid_data_ignores_unchanged_and_missing_keys() -> None:
+def test_table_review_changes_from_grid_data_detects_last_outreach_set_and_clear() -> None:
+    records = [
+        _record(company="Acme", company_key="acme ai"),
+        _record(
+            company="Beta",
+            company_key="beta ai",
+            last_outreach_date="2026-07-07",
+        ),
+    ]
+    grid_rows = inspection_app._company_grid_rows(records)
+    grid_rows[0]["Last Outreach"] = "2026-07-06"
+    grid_rows[1]["Last Outreach"] = ""
+
+    changes = inspection_app._table_review_changes_from_grid_data(records, grid_rows)
+
+    assert changes == [
+        {
+            "grid_row_key": "acme ai",
+            "company_key": "acme ai",
+            "company": "Acme",
+            "fit_status": "unreviewed",
+            "outreach_status": "not_started",
+            "last_outreach_date": date(2026, 7, 6),
+            "status_changed": False,
+            "last_outreach_date_changed": True,
+        },
+        {
+            "grid_row_key": "beta ai",
+            "company_key": "beta ai",
+            "company": "Beta",
+            "fit_status": "unreviewed",
+            "outreach_status": "not_started",
+            "last_outreach_date": None,
+            "status_changed": False,
+            "last_outreach_date_changed": True,
+        },
+    ]
+
+
+def test_table_review_changes_from_grid_data_ignores_unchanged_and_missing_keys() -> None:
     records = [_record(company="Acme", fit_status="best_fit")]
     grid_rows = inspection_app._company_grid_rows(records)
     grid_rows[0]["Company"] = "Changed in browser"
 
-    assert inspection_app._status_changes_from_grid_data(records, grid_rows) == []
+    assert inspection_app._table_review_changes_from_grid_data(records, grid_rows) == []
 
     missing_key_records = [_record(company="No Key", company_key="")]
     missing_key_rows = inspection_app._company_grid_rows(missing_key_records)
     missing_key_rows[0]["Fit Status"] = "possible_fit"
 
-    assert inspection_app._status_changes_from_grid_data(missing_key_records, missing_key_rows) == []
+    assert inspection_app._table_review_changes_from_grid_data(missing_key_records, missing_key_rows) == []
 
 
-def test_save_table_status_changes_calls_upsert_with_expected_payload(monkeypatch) -> None:
-    calls: list[dict[str, object]] = []
+def test_save_table_review_changes_calls_status_and_date_upserts(monkeypatch) -> None:
+    status_calls: list[dict[str, object]] = []
+    date_calls: list[dict[str, object]] = []
 
-    def fake_upsert(payload: dict[str, object], *, database_url: str) -> dict[str, object]:
-        calls.append({"payload": payload, "database_url": database_url})
+    def fake_status_upsert(payload: dict[str, object], *, database_url: str) -> dict[str, object]:
+        status_calls.append({"payload": payload, "database_url": database_url})
         return payload
 
-    monkeypatch.setattr(inspection_app, "upsert_review_statuses", fake_upsert)
+    def fake_date_upsert(payload: dict[str, object], *, database_url: str) -> dict[str, object]:
+        date_calls.append({"payload": payload, "database_url": database_url})
+        return payload
 
-    inspection_app._save_table_status_changes(
+    monkeypatch.setattr(inspection_app, "upsert_review_statuses", fake_status_upsert)
+    monkeypatch.setattr(inspection_app, "upsert_last_outreach_date", fake_date_upsert)
+
+    inspection_app._save_table_review_changes(
         [
             {
                 "company_key": "acme ai",
                 "company": "Acme AI",
                 "fit_status": "best_fit",
                 "outreach_status": "message_sent",
+                "last_outreach_date": date(2026, 7, 6),
+                "status_changed": True,
+                "last_outreach_date_changed": True,
             }
         ],
         database_url="postgres://test",
@@ -685,8 +910,8 @@ def test_save_table_status_changes_calls_upsert_with_expected_payload(monkeypatc
         collection_date="2026-07-07",
     )
 
-    assert calls[0]["database_url"] == "postgres://test"
-    payload = calls[0]["payload"]
+    assert status_calls[0]["database_url"] == "postgres://test"
+    payload = status_calls[0]["payload"]
     assert isinstance(payload, dict)
     assert payload["company_key"] == "acme ai"
     assert payload["fit_status"] == "best_fit"
@@ -695,6 +920,13 @@ def test_save_table_status_changes_calls_upsert_with_expected_payload(monkeypatc
     assert payload["last_updated_by"] == "Jakob"
     assert "notes" not in payload
     assert "communication_history" not in payload
+    assert "last_outreach_date" not in payload
+    date_payload = date_calls[0]["payload"]
+    assert isinstance(date_payload, dict)
+    assert date_payload["company_key"] == "acme ai"
+    assert date_payload["last_outreach_date"] == date(2026, 7, 6)
+    assert "fit_status" not in date_payload
+    assert "outreach_status" not in date_payload
 
 
 def test_render_review_form_saves_general_notes_and_communication_history(
@@ -710,10 +942,6 @@ def test_render_review_form_saves_general_notes_and_communication_history(
         def __exit__(self, *args: object) -> None:
             return None
 
-    class FakeColumn:
-        def selectbox(self, label, options, *, index, **kwargs):  # noqa: ANN001, ANN202
-            return options[index]
-
     class FakeStreamlit:
         def __init__(self) -> None:
             self.session_state: dict[str, object] = {}
@@ -724,9 +952,6 @@ def test_render_review_form_saves_general_notes_and_communication_history(
 
         def form(self, *args, **kwargs) -> FakeForm:  # noqa: ANN002, ANN003
             return FakeForm()
-
-        def columns(self, count: int) -> list[FakeColumn]:
-            return [FakeColumn() for _ in range(count)]
 
         def text_area(self, label, *, value, disabled, **kwargs):  # noqa: ANN001, ANN202
             text_areas.append({"label": label, "value": value, "disabled": disabled})
@@ -745,7 +970,7 @@ def test_render_review_form_saves_general_notes_and_communication_history(
     monkeypatch.setattr(inspection_app, "st", fake_st)
     monkeypatch.setattr(
         inspection_app,
-        "upsert_review_state",
+        "upsert_review_notes",
         lambda payload, *, database_url: saved.append(
             {"payload": payload, "database_url": database_url}
         ),
@@ -757,6 +982,7 @@ def test_render_review_form_saves_general_notes_and_communication_history(
             outreach_status="message_sent",
             review_notes="Strong signal.",
             review_communication_history="Message sent to CTO.",
+            last_outreach_date="2026-07-06",
         ),
         review_state_status=inspection_app.ReviewStateBackendStatus(
             database_url="postgres://test"
@@ -779,6 +1005,9 @@ def test_render_review_form_saves_general_notes_and_communication_history(
     assert isinstance(payload, dict)
     assert payload["notes"] == "Strong signal."
     assert payload["communication_history"] == "Message sent to CTO."
+    assert "fit_status" not in payload
+    assert "outreach_status" not in payload
+    assert "last_outreach_date" not in payload
     assert fake_st.rerun_called is True
 
 
