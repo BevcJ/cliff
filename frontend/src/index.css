@@ -1,0 +1,55 @@
+@import "react-day-picker/style.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 200 33% 98%;
+    --foreground: 0 0% 20%;
+    --muted: 0 0% 95%;
+    --muted-foreground: 0 0% 53%;
+    --accent: 13 70% 95%;
+    --accent-foreground: 349 69% 54%;
+    --primary: 349 69% 54%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 95%;
+    --secondary-foreground: 0 0% 20%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 92%;
+    --input: 0 0% 88%;
+    --ring: 349 69% 54%;
+    --radius: 0.75rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply min-h-screen bg-background text-foreground antialiased;
+    font-family: "Nunito Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: Quicksand, ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: -0.025em;
+  }
+
+  ::selection {
+    @apply bg-primary text-primary-foreground;
+  }
+}
+
+.rdp-root {
+  --rdp-accent-color: hsl(var(--primary));
+  --rdp-accent-background-color: hsl(var(--accent));
+  --rdp-day_button-border-radius: 0.5rem;
+}
