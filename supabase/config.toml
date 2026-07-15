@@ -8,8 +8,18 @@ max_rows = 1000
 
 [auth]
 enabled = true
+enable_signup = false
+minimum_password_length = 8
 site_url = "http://localhost:5173"
-additional_redirect_urls = ["http://localhost:5173/**"]
+additional_redirect_urls = ["http://localhost:5173/set-password"]
+
+[auth.email.template.invite]
+subject = "You are invited to AI Hiring Radar"
+content_path = "./supabase/templates/invite.html"
+
+[auth.email.template.recovery]
+subject = "Reset your AI Hiring Radar password"
+content_path = "./supabase/templates/recovery.html"
 
 [db]
 major_version = 17

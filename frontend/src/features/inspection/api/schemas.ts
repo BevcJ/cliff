@@ -109,9 +109,18 @@ export const jobSchema = z
   })
   .passthrough();
 
+const nullableDetailStringSchema = z
+  .string()
+  .nullish()
+  .transform((value) => value ?? null);
+
 export const companyDetailSchema = companySummarySchema
   .omit({ collection_date: true })
   .extend({
+    role_classification: nullableDetailStringSchema,
+    company_type: nullableDetailStringSchema,
+    company_size: nullableDetailStringSchema,
+    ai_tech_forward_signal: nullableDetailStringSchema,
     inspection_artifact_version: z.number().optional(),
     company_description: z.string().optional().nullable(),
     industry: z.string().optional().nullable(),
@@ -130,6 +139,7 @@ export const companyDetailSchema = companySummarySchema
     has_company_enrichment: z.boolean(),
     jobs: z.array(jobSchema).default([]),
     company_contacts: z.array(contactSchema).default([]),
+    contacts: z.array(contactSchema).default([]),
     company_source_urls: z.array(z.string()).default([]),
     evidence_urls: z.array(z.string()).default([]),
   })

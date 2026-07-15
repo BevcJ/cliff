@@ -76,8 +76,8 @@ export function CompanyDetailDrawer({ open, company, loading, error, saving, onO
           <TextPanel title="Company description" value={company.company_description} />
           <TextPanel title="AI signal reason" value={company.ai_tech_forward_reason} />
           <TextPanel title="Why interesting" value={company.why_interesting} />
+          <ContactsPanel contacts={company.contacts} />
           <JobsPanel jobs={company.jobs} />
-          <ContactsPanel contacts={company.company_contacts} />
           <LinksPanel title="Evidence URLs" urls={company.evidence_urls} />
           <LinksPanel title="Company source URLs" urls={company.company_source_urls} />
         </div>
@@ -135,7 +135,7 @@ function JobsPanel({ jobs }: { jobs: CompanyDetail["jobs"] }) {
   );
 }
 
-function ContactsPanel({ contacts }: { contacts: CompanyDetail["company_contacts"] }) {
+function ContactsPanel({ contacts }: { contacts: CompanyDetail["contacts"] }) {
   if (contacts.length === 0) return null;
   return (
     <Card>
@@ -148,7 +148,7 @@ function ContactsPanel({ contacts }: { contacts: CompanyDetail["company_contacts
             <div className="font-medium">{contact.name || contact.email || "Contact"}</div>
             <div className="text-muted-foreground">{[contact.title, contact.role].filter(Boolean).join(" · ")}</div>
             {contact.email ? <a className="mt-1 block text-primary" href={`mailto:${contact.email}`}>{contact.email}</a> : null}
-            {contact.linkedin_url ? <SafeLink url={contact.linkedin_url} /> : null}
+            {contact.linkedin_url ? <SafeLink label="LinkedIn profile" url={contact.linkedin_url} /> : null}
           </div>
         ))}
       </CardContent>
@@ -171,12 +171,12 @@ function LinksPanel({ title, urls, compact = false }: { title: string; urls: str
   );
 }
 
-function SafeLink({ url }: { url: string }) {
+function SafeLink({ url, label }: { url: string; label?: string }) {
   const isSafe = url.startsWith("https://") || url.startsWith("http://");
   if (!isSafe) return <span className="block truncate text-xs text-muted-foreground">{url}</span>;
   return (
     <a className="block truncate text-xs text-primary hover:underline" href={url} rel="noopener noreferrer" target="_blank" title={url}>
-      {url.replace(/^https?:\/\//, "")}
+      {label ?? url.replace(/^https?:\/\//, "")}
     </a>
   );
 }
