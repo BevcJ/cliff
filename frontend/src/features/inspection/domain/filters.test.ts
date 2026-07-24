@@ -9,6 +9,7 @@ describe("inspection URL state", () => {
     params.append("countries", "Netherlands");
     params.append("countries", MISSING_VALUE);
     params.set("has_contacts", "true");
+    params.set("starred_only", "true");
     params.set("workflow", "outreach");
     params.set("sort", "job_count");
     params.set("direction", "asc");
@@ -19,6 +20,7 @@ describe("inspection URL state", () => {
 
     expect(state.filters.countries).toEqual(["Netherlands", MISSING_VALUE]);
     expect(state.filters.has_contacts).toBe(true);
+    expect(state.filters.starred_only).toBe(true);
     expect(state.workflow).toBe("outreach");
     expect(state.sortField).toBe("job_count");
     expect(state.sortDirection).toBe("asc");
@@ -41,5 +43,27 @@ describe("inspection URL state", () => {
 
   it("normalizes filter query keys for stable TanStack Query caching", () => {
     expect(filtersForQuery({ ...emptyFilters, sources: ["lever", "ashby", "lever"] }).sources).toEqual(["ashby", "lever"]);
+  });
+
+  it("only serializes the active Starred-only filter", () => {
+    const active = buildSearchParams({
+      filters: { ...emptyFilters, starred_only: true },
+      workflow: "inspect",
+      sortField: "job_description_extract_count",
+      sortDirection: "desc",
+      page: 1,
+      selectedCompanyKey: "",
+    });
+    const inactive = buildSearchParams({
+      filters: emptyFilters,
+      workflow: "inspect",
+      sortField: "job_description_extract_count",
+      sortDirection: "desc",
+      page: 1,
+      selectedCompanyKey: "",
+    });
+
+    expect(active.get("starred_only")).toBe("true");
+    expect(inactive.has("starred_only")).toBe(false);
   });
 });

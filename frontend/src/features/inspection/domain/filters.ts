@@ -17,6 +17,7 @@ export type InspectionFilters = {
   has_contacts: boolean | null;
   has_job_description_extracts: boolean | null;
   has_company_enrichment: boolean | null;
+  starred_only: boolean;
   search: string;
 };
 
@@ -46,6 +47,7 @@ export const emptyFilters: InspectionFilters = {
   has_contacts: null,
   has_job_description_extracts: null,
   has_company_enrichment: null,
+  starred_only: false,
   search: "",
 };
 
@@ -84,6 +86,7 @@ export function parseUrlState(searchParams: URLSearchParams): InspectionUrlState
   filters.min_jobs = parseNullableNumber(searchParams.get("min_jobs"));
   filters.max_jobs = parseNullableNumber(searchParams.get("max_jobs"));
   filters.search = searchParams.get("search") ?? "";
+  filters.starred_only = searchParams.get("starred_only") === "true";
 
   for (const key of booleanKeys) {
     filters[key] = parseNullableBoolean(searchParams.get(key));
@@ -118,6 +121,7 @@ export function buildSearchParams(state: InspectionUrlState): URLSearchParams {
   if (state.filters.min_jobs !== null) params.set("min_jobs", String(state.filters.min_jobs));
   if (state.filters.max_jobs !== null) params.set("max_jobs", String(state.filters.max_jobs));
   if (state.filters.search.trim()) params.set("search", state.filters.search.trim());
+  if (state.filters.starred_only) params.set("starred_only", "true");
   for (const key of booleanKeys) {
     if (state.filters[key] !== null) params.set(key, String(state.filters[key]));
   }

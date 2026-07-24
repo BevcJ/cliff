@@ -1,6 +1,6 @@
 import { format } from "date-fns";
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
-import { ArrowDown, ArrowUp, CalendarIcon, X } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarIcon, Star, X } from "lucide-react";
 import type { MouseEvent } from "react";
 import { useState } from "react";
 
@@ -24,6 +24,7 @@ type CompanyTableProps = {
   onSelect: (companyKey: string) => void;
   onSort: (field: SortField) => void;
   onPageChange: (page: number) => void;
+  onStarChange: (row: CompanySummary, isStarred: boolean) => void;
   onStatusChange: (row: CompanySummary, fitStatus: FitStatus, outreachStatus: OutreachStatus) => void;
   onStatusWithLastOutreachChange: (row: CompanySummary, fitStatus: FitStatus, outreachStatus: "message_sent" | "follow_up_sent", lastOutreachDate: string) => void;
   onLastOutreachChange: (row: CompanySummary, lastOutreachDate: string | null) => void;
@@ -41,11 +42,30 @@ export function CompanyTable({
   onSelect,
   onSort,
   onPageChange,
+  onStarChange,
   onStatusChange,
   onStatusWithLastOutreachChange,
   onLastOutreachChange,
 }: CompanyTableProps) {
   const columns: ColumnDef<CompanySummary>[] = [
+    {
+      accessorKey: "is_starred",
+      size: 48,
+      header: () => <span className="sr-only">Starred</span>,
+      cell: ({ row }) => (
+        <button
+          data-row-control
+          aria-label={`${row.original.is_starred ? "Unstar" : "Star"} ${row.original.company}`}
+          aria-pressed={row.original.is_starred}
+          className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:bg-amber-50 hover:text-amber-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+          disabled={savingCompanyKey === row.original.company_key}
+          type="button"
+          onClick={() => onStarChange(row.original, !row.original.is_starred)}
+        >
+          <Star className={cn("h-4 w-4", row.original.is_starred && "fill-amber-400 text-amber-500")} />
+        </button>
+      ),
+    },
     {
       accessorKey: "company",
       size: 230,
@@ -89,7 +109,7 @@ export function CompanyTable({
       accessorKey: "last_outreach_date",
       size: 170,
       header: "Last Outreach",
-      cell: ({ row }) => <LastOutreachPicker disabled={savingCompanyKey === row.original.company_key} value={row.original.last_outreach_date} onChange={(value) => onLastOutreachChange(row.original, value)} />,
+      cell: ({ row }) => <LastOutreachPicker allowClear={!isOutboundStatus(row.original.outreach_status)} disabled={savingCompanyKey === row.original.company_key} value={row.original.last_outreach_date} onChange={(value) => onLastOutreachChange(row.original, value)} />,
     },
     { accessorKey: "job_count", size: 70, header: () => <SortHeader field="job_count" label="Jobs" onSort={onSort} sortDirection={sortDirection} sortField={sortField} /> },
     { accessorKey: "job_description_extract_count", size: 100, header: () => <SortHeader field="job_description_extract_count" label="JD Extracts" onSort={onSort} sortDirection={sortDirection} sortField={sortField} /> },
@@ -185,7 +205,7 @@ function SortHeader({ field, label, sortField, sortDirection, onSort }: { field:
   );
 }
 
-function LastOutreachPicker({ disabled, value, onChange }: { disabled: boolean; value: string | null; onChange: (value: string | null) => void }) {
+function LastOutreachPicker({ allowClear, disabled, value, onChange }: { allowClear: boolean; disabled: boolean; value: string | null; onChange: (value: string | null) => void }) {
   const [open, setOpen] = useState(false);
   const selectedDate = parseIsoDate(value);
   const today = new Date();
@@ -211,12 +231,14 @@ function LastOutreachPicker({ disabled, value, onChange }: { disabled: boolean; 
             }}
           />
           <div className="flex items-center justify-between border-t p-2">
-            <Button size="sm" variant="ghost" onClick={() => {
-              onChange(null);
-              setOpen(false);
-            }}>
-              <X className="mr-1 h-3.5 w-3.5" /> Clear
-            </Button>
+            {allowClear ? (
+              <Button size="sm" variant="ghost" onClick={() => {
+                onChange(null);
+                setOpen(false);
+              }}>
+                <X className="mr-1 h-3.5 w-3.5" /> Clear
+              </Button>
+            ) : <span className="text-xs text-muted-foreground">Date required while outbound</span>}
             <span className="text-xs text-muted-foreground">Future dates disabled</span>
           </div>
         </PopoverContent>
@@ -335,14 +357,21 @@ function isRowControlClick(event: MouseEvent<HTMLTableRowElement>) {
 }
 
 function isControlColumn(columnId: string) {
-  return columnId === "fit_status" || columnId === "outreach_status" || columnId === "last_outreach_date";
+  return columnId === "is_starred" || columnId === "fit_status" || columnId === "outreach_status" || columnId === "last_outreach_date";
 }
 
 function cellClass(columnId: string, className: string, header = false) {
+  if (columnId === "is_starred") {
+    return cn(
+      className,
+      "sticky left-0 z-30 px-2",
+      header ? "bg-secondary" : "bg-white group-hover:bg-secondary group-data-[selected=true]:bg-accent",
+    );
+  }
   if (columnId !== "company") return className;
   return cn(
     className,
-    "sticky left-0 z-20 shadow-[1px_0_0_hsl(var(--border))]",
+    "sticky left-[48px] z-20 shadow-[1px_0_0_hsl(var(--border))]",
     header ? "bg-secondary" : "bg-white group-hover:bg-secondary group-data-[selected=true]:bg-accent",
   );
 }

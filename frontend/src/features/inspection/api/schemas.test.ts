@@ -13,6 +13,7 @@ const detailPayload = {
   fit_status: "unreviewed",
   outreach_status: "not_started",
   last_outreach_date: null,
+  is_starred: false,
   has_review_state: false,
   workflow: "inspect",
   follow_up_status: "",
@@ -41,5 +42,9 @@ describe("companyDetailSchema", () => {
     expect(result.company_size).toBeNull();
     expect(result.company_type).toBe("ai_native");
     expect(result.ai_tech_forward_signal).toBe("strong");
+  });
+
+  it("requires a boolean star state", () => {
+    expect(() => companyDetailSchema.parse({ ...detailPayload, is_starred: "yes" })).toThrow();
   });
 });

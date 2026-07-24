@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import { Button } from "../../../components/ui/button";
@@ -35,6 +35,13 @@ export function InspectionRoute() {
   });
   const detailQuery = useCompanyDetailQuery(collectionDate, state.selectedCompanyKey);
   const mutations = useReviewMutations(collectionDate);
+
+  useEffect(() => {
+    if (!companyListQuery.data || companyListQuery.isPlaceholderData) return;
+    const totalPages = Math.max(1, Math.ceil(companyListQuery.data.total / PAGE_SIZE));
+    if (state.page <= totalPages) return;
+    setSearchParams(buildSearchParams({ ...state, page: totalPages, selectedCompanyKey: "" }), { replace: true });
+  }, [companyListQuery.data, companyListQuery.isPlaceholderData, setSearchParams, state]);
 
   const collections = collectionsQuery.data ?? [];
   const collectionExists = collections.some((collection) => collection.collection_date === collectionDate);
@@ -91,6 +98,18 @@ export function InspectionRoute() {
       await mutations.updateLastOutreach.mutateAsync({ collectionDate, companyKey: row.company_key, lastOutreachDate });
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Failed to save Last Outreach");
+    } finally {
+      setSavingCompanyKey(null);
+    }
+  }
+
+  async function saveStar(row: CompanySummary, isStarred: boolean) {
+    setErrorMessage(null);
+    setSavingCompanyKey(row.company_key);
+    try {
+      await mutations.updateStar.mutateAsync({ collectionDate, companyKey: row.company_key, isStarred });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Failed to save star");
     } finally {
       setSavingCompanyKey(null);
     }
@@ -154,6 +173,7 @@ export function InspectionRoute() {
               onSelect={(companyKey) => updateState({ selectedCompanyKey: companyKey })}
               onSort={updateSort}
               onPageChange={(page) => updateState({ page, selectedCompanyKey: "" })}
+              onStarChange={(row, isStarred) => void saveStar(row, isStarred)}
               onStatusChange={(row, fitStatus, outreachStatus) => void saveStatus(row, fitStatus, outreachStatus)}
               onStatusWithLastOutreachChange={(row, fitStatus, outreachStatus, lastOutreachDate) => void saveStatusWithLastOutreach(row, fitStatus, outreachStatus, lastOutreachDate)}
               onLastOutreachChange={(row, lastOutreachDate) => void saveLastOutreach(row, lastOutreachDate)}

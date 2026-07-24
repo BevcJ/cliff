@@ -75,6 +75,10 @@ Do not replace these links with `{{ .ConfirmationURL }}`. The URL fragment keeps
 
 Users who forget their password can use `/forgot-password`. Account creation and invitation remain administrator-only.
 
+## Review behavior
+
+Selecting `message_sent` or `follow_up_sent` requires choosing Last Outreach in the same operation. Fit-only edits preserve that date, and Last Outreach cannot be cleared while either outbound status remains active.
+
 ## Manual hosting notes
 
 The build output is `dist/`. Static hosting must serve `index.html` for unknown routes so React Router can handle `/inspection` and `/inspection/:collectionDate`.

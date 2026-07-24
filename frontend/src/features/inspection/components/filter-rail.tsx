@@ -1,4 +1,4 @@
-import { Check, ChevronDown, X } from "lucide-react";
+import { Check, ChevronDown, Star, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "../../../components/ui/button";
@@ -30,6 +30,16 @@ export function FilterRail({ filters, options, onChange }: FilterRailProps) {
         </Button>
       </div>
       <div className="space-y-3">
+        <label className={cn("flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium", filters.starred_only ? "border-amber-300 bg-amber-50 text-amber-900" : "border-input bg-white")}>
+          <input
+            checked={filters.starred_only}
+            className="h-4 w-4 accent-amber-500"
+            type="checkbox"
+            onChange={(event) => update("starred_only", event.target.checked)}
+          />
+          <Star className={cn("h-4 w-4", filters.starred_only && "fill-amber-400 text-amber-500")} />
+          Starred only
+        </label>
         <FilterText label="Search" value={filters.search} onChange={(value) => update("search", value)} />
         <NumberFilter label="Min jobs" value={filters.min_jobs} onChange={(value) => update("min_jobs", value)} />
         <NumberFilter label="Max jobs" value={filters.max_jobs} onChange={(value) => update("max_jobs", value)} />

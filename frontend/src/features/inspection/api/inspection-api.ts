@@ -104,6 +104,18 @@ export function updateLastOutreach(args: { collectionDate: string; companyKey: s
   );
 }
 
+export function updateStar(args: { collectionDate: string; companyKey: string; isStarred: boolean }) {
+  return rpc(
+    "inspection_update_star",
+    {
+      p_collection_date: args.collectionDate,
+      p_company_key: args.companyKey,
+      p_is_starred: args.isStarred,
+    },
+    reviewStateSchema,
+  );
+}
+
 export function updateNotes(args: { collectionDate: string; companyKey: string; notes: string; communicationHistory: string }) {
   return rpc(
     "inspection_update_notes",

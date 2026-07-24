@@ -26,6 +26,7 @@ const row: CompanySummary = {
   fit_status: "unreviewed",
   outreach_status: "not_started",
   last_outreach_date: null,
+  is_starred: false,
   has_review_state: false,
   workflow: "inspect",
   follow_up_status: "",
@@ -52,6 +53,25 @@ describe("CompanyTable", () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
+  it("stars a company without opening the detail drawer", async () => {
+    const onSelect = vi.fn();
+    const onStarChange = vi.fn();
+    renderTable({ onSelect, onStarChange });
+
+    await userEvent.click(screen.getByRole("button", { name: "Star Acme AI" }));
+
+    expect(onStarChange).toHaveBeenCalledWith(row, true);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("shows and disables the active star while the company is saving", () => {
+    renderTable({ rows: [{ ...row, is_starred: true }], savingCompanyKey: row.company_key });
+
+    const button = screen.getByRole("button", { name: "Unstar Acme AI" });
+    expect(button).toHaveAttribute("aria-pressed", "true");
+    expect(button).toBeDisabled();
+  });
+
   it("requires date confirmation before saving outbound outreach statuses", async () => {
     const onStatusChange = vi.fn();
     const onStatusWithLastOutreachChange = vi.fn();
@@ -76,6 +96,15 @@ describe("CompanyTable", () => {
 
     expect(onStatusWithLastOutreachChange).not.toHaveBeenCalled();
   });
+
+  it("does not allow Last Outreach to be cleared while the company is outbound", async () => {
+    renderTable({ rows: [{ ...row, outreach_status: "message_sent", last_outreach_date: "2026-07-03" }] });
+
+    await userEvent.click(screen.getByRole("button", { name: "Edit Last Outreach" }));
+
+    expect(screen.queryByRole("button", { name: /Clear/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Date required while outbound")).toBeInTheDocument();
+  });
 });
 
 function renderTable(overrides: Partial<React.ComponentProps<typeof CompanyTable>> = {}) {
@@ -92,6 +121,7 @@ function renderTable(overrides: Partial<React.ComponentProps<typeof CompanyTable
       onSelect={vi.fn()}
       onSort={vi.fn()}
       onPageChange={vi.fn()}
+      onStarChange={vi.fn()}
       onStatusChange={vi.fn()}
       onStatusWithLastOutreachChange={vi.fn()}
       onLastOutreachChange={vi.fn()}

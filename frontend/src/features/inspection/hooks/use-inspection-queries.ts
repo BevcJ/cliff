@@ -4,7 +4,7 @@ import type { CompanyDetail, CompanyList } from "../api/schemas";
 import { PAGE_SIZE, type SortDirection, type SortField, type Workflow } from "../domain/constants";
 import type { InspectionFilters } from "../domain/filters";
 import { filtersForQuery } from "../domain/filters";
-import { getCompany, getCounts, getFilterOptions, listCollections, listCompanies, updateLastOutreach, updateNotes, updateStatus, updateStatusWithLastOutreach } from "../api/inspection-api";
+import { getCompany, getCounts, getFilterOptions, listCollections, listCompanies, updateLastOutreach, updateNotes, updateStar, updateStatus, updateStatusWithLastOutreach } from "../api/inspection-api";
 
 export const inspectionKeys = {
   collections: ["inspection", "collections"] as const,
@@ -55,8 +55,9 @@ export function useReviewMutations(collectionDate: string) {
   const queryClient = useQueryClient();
 
   function invalidate(companyKey?: string) {
-    void queryClient.invalidateQueries({ queryKey: ["inspection", collectionDate] });
-    if (companyKey) void queryClient.invalidateQueries({ queryKey: inspectionKeys.detail(collectionDate, companyKey) });
+    const invalidations = [queryClient.invalidateQueries({ queryKey: ["inspection", collectionDate] })];
+    if (companyKey) invalidations.push(queryClient.invalidateQueries({ queryKey: inspectionKeys.detail(collectionDate, companyKey) }));
+    return Promise.all(invalidations);
   }
 
   async function snapshot() {
@@ -111,6 +112,16 @@ export function useReviewMutations(collectionDate: string) {
       onMutate: async (variables) => {
         const previous = await snapshot();
         patchCompany(variables.companyKey, { last_outreach_date: variables.lastOutreachDate });
+        return { previous };
+      },
+      onError: (_error, _variables, context) => rollback(context),
+      onSettled: (_data, _error, variables) => invalidate(variables?.companyKey),
+    }),
+    updateStar: useMutation({
+      mutationFn: updateStar,
+      onMutate: async (variables) => {
+        const previous = await snapshot();
+        patchCompany(variables.companyKey, { is_starred: variables.isStarred });
         return { previous };
       },
       onError: (_error, _variables, context) => rollback(context),

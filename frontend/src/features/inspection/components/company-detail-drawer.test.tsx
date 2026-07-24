@@ -24,6 +24,7 @@ const company: CompanyDetail = {
   fit_status: "unreviewed",
   outreach_status: "not_started",
   last_outreach_date: null,
+  is_starred: false,
   has_review_state: false,
   workflow: "inspect",
   follow_up_status: "",

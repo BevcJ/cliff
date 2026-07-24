@@ -43,6 +43,10 @@ export type Database = {
         Args: { p_collection_date: string; p_company_key: string; p_last_outreach_date: string | null };
         Returns: Json;
       };
+      inspection_update_star: {
+        Args: { p_collection_date: string; p_company_key: string; p_is_starred: boolean };
+        Returns: Json;
+      };
       inspection_update_notes: {
         Args: { p_collection_date: string; p_company_key: string; p_notes: string; p_communication_history: string };
         Returns: Json;

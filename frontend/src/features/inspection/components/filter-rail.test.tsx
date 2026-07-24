@@ -47,4 +47,13 @@ describe("FilterRail", () => {
 
     await waitFor(() => expect(onChange).toHaveBeenCalledWith({ ...emptyFilters, search: "ai" }));
   });
+
+  it("enables the Starred-only filter", async () => {
+    const onChange = vi.fn();
+    render(<FilterRail filters={emptyFilters} options={options} onChange={onChange} />);
+
+    await userEvent.click(screen.getByRole("checkbox", { name: "Starred only" }));
+
+    expect(onChange).toHaveBeenCalledWith({ ...emptyFilters, starred_only: true });
+  });
 });
