@@ -1,5 +1,7 @@
 # Company Inspection UI
 
+> **Superseded (2026-07-20):** The Streamlit implementation and JSONL frontend runtime described here have been removed. The current inspection UI is the authenticated React application documented in `frontend/README.md`, backed by the Supabase RPC boundary in `supabase/README.md`. This document is retained as architectural history.
+
 ## Status
 
 Draft

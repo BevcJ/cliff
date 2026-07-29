@@ -40,7 +40,6 @@ uv run ai-hiring-radar enrich-companies --date YYYY-MM-DD --model gpt-5.4-mini
 uv run ai-hiring-radar enrich-companies --date YYYY-MM-DD --no-progress
 uv run ai-hiring-radar export --date YYYY-MM-DD
 uv run ai-hiring-radar sync-inspection-db --date YYYY-MM-DD
-uv run ai-hiring-radar inspect --date YYYY-MM-DD
 ```
 
 ATS discovery commands use Serper Google Search to find public provider boards. Provider collection commands store raw, self-describing JSON wrappers under `data/raw/ats/YYYY-MM-DD/<provider>/`.
@@ -55,51 +54,47 @@ Job description extraction is a separate step after `process`. It reads `data/pr
 
 Company enrichment is a separate step after `process`. It reads `data/processed/companies_YYYY-MM-DD.jsonl`, optionally joins compact context from `data/processed/job_candidates_YYYY-MM-DD.jsonl`, uses Pydantic AI with native web search to extract company facts and public contacts, and writes `data/processed/company_enrichment_extracts_YYYY-MM-DD.jsonl`. The enrichment output includes model/prompt metadata, source URLs, company facts, named public contacts, generic public inboxes, and compact `quality_warnings`, but intentionally does not include full web page text, search result dumps, evidence snippets, job age, final recommendations, outreach reasons, or raw LLM responses. Progress is shown by default with `tqdm`; use `--no-progress` for quiet runs. Successful records are appended immediately, and reruns resume by skipping existing `company_key`s. Use `--countries nl,dk` to enrich only companies matching any selected country code before broadening to the full set later. Use `--restart` to clear existing extracts first. Core company facts require non-ATS source URLs; if a model returns ATS-only company facts, the runner retries once, then removes only unsupported fields while preserving useful ATS-supported AI hiring signals. Use `--dry-run` to count processable companies without model calls or output writes.
 
-Inspection launches a Streamlit UI for one processed date. When `AI_HIRING_RADAR_DATABASE_URL` or the `supabase_inspection` Streamlit secret is configured, the UI first tries to load compact company snapshots from Postgres. If the selected date is unsynced or Postgres is unavailable, it falls back to JSONL. Without Postgres, it requires `data/processed/companies_YYYY-MM-DD.jsonl` and uses `data/processed/job_candidates_YYYY-MM-DD.jsonl`, `data/processed/job_description_extracts_YYYY-MM-DD.jsonl`, and `data/processed/company_enrichment_extracts_YYYY-MM-DD.jsonl` when present. Missing optional files only reduce available filters and detail panels. The UI supports filtering by workplace mode, AI team context, delivery context, company type, raw company size, country, role classification, source/platform, AI tech-forward signal, fit status, outreach status, contacts, JD extracts, enrichment status, and free-text search. Generated company/job/enrichment facts remain read-only. When the database is configured, operators can save shared company fit status, outreach status, Last Outreach date, General Notes, and Communication History in `company_review_state`; the table edits statuses and Last Outreach, while Company Detail edits notes/history. When the database URL is missing or unavailable, the app still renders generated inspection data in read-only mode.
+The inspection application is a desktop React SPA in `frontend/`. It authenticates invited users with Supabase Auth and reads/writes through the RLS-protected RPCs in `supabase/`. It does not read local JSONL files or receive a PostgreSQL password. The Python pipeline remains the producer: `sync-inspection-db` joins the canonical processed files, removes full descriptions and raw nested payloads, and transactionally replaces generated snapshots without modifying `company_review_state`.
 
 The included Azure AI Foundry configuration uses the Responses API endpoint `https://dev-aibooking-openai.openai.azure.com/openai/responses?api-version=2025-04-01-preview` and deployment `gpt-5.4-mini`. The extractor normalizes that URL to the Azure resource endpoint and uses Pydantic AI's `OpenAIResponsesModel` automatically. If `--model` is omitted, `AZURE_OPENAI_DEPLOYMENT_NAME` is used before `JOB_DESCRIPTION_EXTRACTION_MODEL`.
 
 Company enrichment uses `COMPANY_ENRICHMENT_MODEL` directly as the Azure deployment name when `AZURE_OPENAI_ENDPOINT` is configured. The default is `gpt-5.4-mini`; if Azure rejects native web search for that deployment/API version, the command reports sampled model errors in the CLI summary and continues counting per-record failures.
 
-ATS discovery uses provider-specific hosted-board URL patterns, while collection keeps each provider's request, pagination, fallback, and detail-fetch behavior inside its source module. Raw responses use the shared `data/raw/ats/YYYY-MM-DD/PROVIDER/` layout and are included by `process` before dedupe and company aggregation. See the [ATS Provider Integration Guide](ats_provider_integration_guide.md) and [ATS integration notes](ats_integration/README.md) for provider details. Use `debug-ashby-discovery` for a paste-friendly summary of Ashby discovery errors.
+### Contact Email Provider Evaluation
 
-## Streamlit Cloud Deployment
-
-The deployment entrypoint is `streamlit_app.py`.
-
-The local inspection app reads full processed JSONL files from `data/processed/`. For Streamlit Cloud, export a compact inspection artifact instead of committing the full candidate data:
+The contact email evaluation is isolated from production data. Run the read-only query in `supabase/snippets/contact_email_evaluation_export.sql` in the Supabase SQL Editor and download its result as CSV. Add `FULLENRICH_API_KEY` and `PROSPEO_API_KEY` to the root `.env`, then run:
 
 ```bash
-uv run ai-hiring-radar export-inspection --date YYYY-MM-DD
+uv run ai-hiring-radar evaluate-contact-emails --input ~/Downloads/contact_email_evaluation_export.csv
 ```
 
-This writes `data/processed/inspection_companies_YYYY-MM-DD.jsonl`. The artifact keeps company facts, job metadata, extracted filters, contacts, and URLs, but omits full job-description text and raw nested payloads. If no date is provided, the deployed app loads the latest `companies_YYYY-MM-DD.jsonl` or `inspection_companies_YYYY-MM-DD.jsonl` file. Optional date override:
+Use `--limit 1` for the first live check. It selects the first contact that has a usable first and last name and does not already have an email:
 
-```text
-https://your-app.streamlit.app/?date=YYYY-MM-DD
+```bash
+uv run ai-hiring-radar evaluate-contact-emails \
+  --input ~/Downloads/contact_email_evaluation_export.csv \
+  --limit 1
 ```
 
+The command submits only contacts without an existing email, requests work emails only, waits for FullEnrich, and writes raw provider responses plus `comparison.csv` and `summary.json` under `data/evaluations/`. That directory is ignored by Git. The command never writes to Supabase or the inspection JSONL files. To resume an interrupted run without repeating completed provider requests, rerun with the same input and the printed run directory:
 
+```bash
+uv run ai-hiring-radar evaluate-contact-emails \
+  --input ~/Downloads/contact_email_evaluation_export.csv \
+  --output-dir data/evaluations/contact-email-YYYYMMDD-HHMMSS
+```
 
-### Postgres Inspection And Review State
+ATS discovery uses provider-specific hosted-board URL patterns, while collection keeps each provider's request, pagination, fallback, and detail-fetch behavior inside its source module. Raw responses use the shared `data/raw/ats/YYYY-MM-DD/PROVIDER/` layout and are included by `process` before dedupe and company aggregation. See the [ATS Provider Integration Guide](ats_provider_integration_guide.md) and [ATS integration notes](ats_integration/README.md) for provider details. Use `debug-ashby-discovery` for a paste-friendly summary of Ashby discovery errors.
 
-The inspection app can persist current manual review state in Supabase Postgres. Generated JSONL and compact inspection artifacts stay read-only; only `company_review_state` is written by the app.
+## Inspection Application
 
-For a new installation, create the table and indexes by running `architecture-design-documents/04-company-review-state/setup.sql` from the Supabase SQL editor. For an existing installation, run any missing idempotent migrations before deploying the updated app: `architecture-design-documents/04-company-review-state/migrate_add_communication_history.sql` adds Communication History, and `architecture-design-documents/04-company-review-state/migrate_add_last_outreach_date.sql` adds the nullable Last Outreach date. Existing rows remain valid and keep an empty Last Outreach date until an operator enters one.
-
-For an existing installation using the legacy outreach statuses, deploy the status change in this order:
-
-1. Run `architecture-design-documents/09-outreach-status-workflow/01-expand-outreach-statuses.sql`.
-2. Deploy the application version that reads legacy aliases and writes the new statuses.
-3. Run `architecture-design-documents/09-outreach-status-workflow/02-backfill-and-contract-outreach-statuses.sql`.
-
-For Postgres-backed inspection serving, also run `architecture-design-documents/05-inspection-postgres-serving/setup.sql`. Then sync a processed date into the serving tables:
+Apply the migrations and local verification steps in `supabase/README.md`, then synchronize a processed date:
 
 ```bash
 uv run ai-hiring-radar sync-inspection-db --date YYYY-MM-DD
 ```
 
-The sync command loads the same company-centric inspection model as Streamlit, strips full job descriptions and raw nested payloads, and stores one compact snapshot row per company. Re-syncing a date replaces generated snapshots for that date without modifying `company_review_state`.
+The sync command requires `companies_YYYY-MM-DD.jsonl`. Candidate, job-description extraction, and enrichment files for the same date are optional inputs. It stores one sanitized snapshot row per company. Re-syncing a date replaces generated snapshots for that date without modifying `company_review_state`.
 
 The persisted status values are:
 
@@ -110,37 +105,24 @@ outreach_status: not_started, message_sent, follow_up_sent, active_conversation,
 
 `closed` leads appear in the Closed workflow view. Leads with either `lost_client_rejection` or `lost_no_response` appear in Rejected, which also includes leads whose fit status is `not_interesting`. Terminal outreach statuses are excluded from Shortlist and Outreach; `closed` takes precedence if a lead also has a rejected fit status.
 
-Last Outreach is a company-level calendar date edited directly in the table beside Fit and Outreach. The table also displays a pinned follow-up indicator for `message_sent` and `follow_up_sent`: green through day 3, yellow on days 4-5, and red from day 6 onward. A missing date is red. `not_started`, `active_conversation`, `closed`, and lost statuses do not show an age reminder. Table saves use partial updates so status edits preserve Last Outreach and date edits preserve notes/history/statuses.
+Last Outreach is a company-level calendar date edited directly in the table beside Fit and Outreach. `message_sent` and `follow_up_sent` require a date. The table displays a follow-up indicator: green through day 3, yellow on days 4-5, and red from day 6 onward. Other statuses do not show an age reminder. Partial RPCs ensure status edits preserve Last Outreach and notes/history, date edits preserve statuses and notes/history, and note edits preserve statuses and dates.
 
-For Streamlit Cloud, add the Supabase transaction-pooler connection string to app secrets:
-
-```toml
-[connections.supabase_inspection]
-url = "postgres://app_user.PROJECT_REF:PASSWORD@aws-REGION.pooler.supabase.com:6543/postgres"
-```
-
-For local development, use `.env` or your shell:
+For local synchronization, use `.env` or your shell with the server-only producer role:
 
 ```bash
-AI_HIRING_RADAR_DATABASE_URL=postgres://app_user.PROJECT_REF:PASSWORD@aws-REGION.pooler.supabase.com:6543/postgres
+AI_HIRING_RADAR_DATABASE_URL=postgresql://app_inspection_user.PROJECT_REF:PASSWORD@aws-REGION.pooler.supabase.com:6543/postgres
 ```
 
-Use a dedicated least-privilege database user for the app and sync command. It needs `usage` on schema `public`; `select`, `insert`, `update`, and `delete` on `public.inspection_collections` and `public.inspection_company_snapshots`; and `select`, `insert`, and `update` on `public.company_review_state`. It does not need DDL or access to generated files.
+The `app_inspection_user` role is limited to inserting and replacing generated collections and snapshots. It cannot access `company_review_state`; the TypeScript frontend reads and writes review state only through authenticated Supabase RPCs. Never expose the producer URL or password through `VITE_*` variables.
 
-To verify configuration, launch the app and check the top summary area. It shows whether inspection data loaded from `database` or `jsonl`, whether review-state persistence is enabled, how many persisted rows loaded for the current generated records, how many records are using defaults, and counts by fit/outreach status. If the URL is missing, the table is missing, or Supabase is unavailable, the app shows a warning and falls back to JSONL when possible while disabling save controls if review-state writes are unavailable.
-
-For the simplest private deployment:
-
-1. Create a private GitHub repository.
-2. Generate and commit the selected `data/processed/inspection_companies_*.jsonl` artifact files you want visible.
-3. In Streamlit Community Cloud, create a new private app from the repository.
-4. Set the main file path to `streamlit_app.py`.
-5. Add trusted viewers in Streamlit Community Cloud.
-
-Only commit processed data that is safe for the selected viewers. Do not commit `.env`, `data/raw/`, `data/exports/`, or full `job_candidates_*.jsonl` files. Candidate files may include job descriptions, and enrichment files may include public contacts.
+Frontend setup, authentication, build, and static-hosting requirements are documented in `frontend/README.md`. Only `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` belong in the browser environment. Never expose `AI_HIRING_RADAR_DATABASE_URL`, a Supabase secret/service-role key, or a PostgreSQL password through `VITE_*` variables.
 
 ## Tests
 
 ```bash
 uv run pytest
+npm --prefix frontend run typecheck
+npm --prefix frontend run test
+npm --prefix frontend run build
+npx supabase test db
 ```

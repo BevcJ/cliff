@@ -1,8 +1,14 @@
 .env
+.DS_Store
 .venv/
 __pycache__/
 .pytest_cache/
+cdk.out/
+node_modules/
 data/*
 !data/processed/
 data/processed/*
-!data/processed/inspection_companies_*.jsonl
+supabase/.branches/
+supabase/.temp/
+tools/*
+infra/*

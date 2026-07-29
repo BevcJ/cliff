@@ -1,5 +1,7 @@
 # Company Review State
 
+> **Superseded (2026-07-20):** The direct Streamlit/PostgreSQL adapter described here has been removed. `company_review_state` remains, but authenticated React users access it only through the partial-write Supabase RPCs documented in `supabase/README.md`. This document is retained as architectural history.
+
 ## Status
 
 Draft
@@ -18,11 +20,11 @@ This design adds Supabase Postgres as the shared state store for current company
 
 1. Extend the existing Streamlit inspection UI instead of creating a separate app.
 2. Let users mark company fit as `unreviewed`, `best_fit`, `possible_fit`, or `not_interesting`.
-3. Let users mark outreach status as `not_started`, `message_sent`, `follow_up_needed`, `replied`, or `closed`.
+3. Let users mark outreach status as `not_started`, `message_sent`, `follow_up_sent`, `active_conversation`, `closed`, `lost_client_rejection`, or `lost_no_response`.
 4. Let users save separate free-text General Notes and Communication History per company.
 5. Persist review state in Supabase Postgres so all Streamlit Cloud users see the same state.
 6. Keep generated company, candidate, enrichment, and inspection artifact JSONL files read-only.
-7. Add UI tabs for the review workflow: `Inspect`, `Shortlist`, `Outreach`, and `Rejected`.
+7. Add UI tabs for the review workflow: `Inspect`, `Shortlist`, `Outreach`, `Closed`, and `Rejected`.
 8. Keep v1 simple: no authentication, no structured or append-only event history, no CRM sync, and no per-user ownership.
 9. Provide a degraded read-only mode when Supabase is unavailable or not configured.
 
@@ -58,10 +60,12 @@ Functional requirements:
 9. Changing `fit_status` from `unreviewed` to any reviewed status must set `inspected_at` if it was previously empty.
 10. Saving must update `last_seen_collection_date`, `last_updated_at`, and `last_updated_by`.
 11. The app must include a sidebar `Reviewer name` text input and use it as `last_updated_by` when non-empty.
-12. The app must expose a `Shortlist` tab with companies where `fit_status` is `best_fit` or `possible_fit`.
-13. The app must expose an `Outreach` tab for suitable companies where outreach has started or follow-up is needed.
-14. The app must expose a `Rejected` tab for companies where `fit_status` is `not_interesting`.
-15. If Supabase is unavailable, missing, or misconfigured, generated inspection data must still render read-only with a visible warning and disabled save controls.
+12. The app must expose a `Shortlist` tab with suitable companies whose outreach has not started.
+13. The app must expose an `Outreach` tab for suitable companies with `message_sent`, `follow_up_sent`, or `active_conversation`.
+14. The app must expose a `Closed` tab for companies with `outreach_status = 'closed'`.
+15. The app must expose a `Rejected` tab for companies with a lost outreach status or `fit_status = 'not_interesting'`.
+16. `closed` must take precedence over fit rejection when determining terminal tab membership.
+17. If Supabase is unavailable, missing, or misconfigured, generated inspection data must still render read-only with a visible warning and disabled save controls.
 
 Non-functional requirements:
 
@@ -156,7 +160,15 @@ create table company_review_state (
     check (fit_status in ('unreviewed', 'best_fit', 'possible_fit', 'not_interesting')),
 
   constraint company_review_state_outreach_status_check
-    check (outreach_status in ('not_started', 'message_sent', 'follow_up_needed', 'replied', 'closed'))
+    check (outreach_status in (
+      'not_started',
+      'message_sent',
+      'follow_up_sent',
+      'active_conversation',
+      'closed',
+      'lost_client_rejection',
+      'lost_no_response'
+    ))
 );
 
 create index company_review_state_fit_status_idx
@@ -261,9 +273,11 @@ FIT_STATUS_OPTIONS = ("unreviewed", "best_fit", "possible_fit", "not_interesting
 OUTREACH_STATUS_OPTIONS = (
     "not_started",
     "message_sent",
-    "follow_up_needed",
-    "replied",
+    "follow_up_sent",
+    "active_conversation",
     "closed",
+    "lost_client_rejection",
+    "lost_no_response",
 )
 ```
 
@@ -379,15 +393,13 @@ returning *;
 
 Tab behavior:
 
-1. `Inspect`: all merged records after global filters.
-2. `Shortlist`: records where `fit_status in ('best_fit', 'possible_fit')`.
-3. `Outreach`: records where `fit_status in ('best_fit', 'possible_fit')` and `outreach_status != 'not_started'`.
-4. `Rejected`: records where `fit_status = 'not_interesting'`.
+1. `Inspect`: merged records that are not assigned to Shortlist, Outreach, Closed, or Rejected after global filters.
+2. `Shortlist`: suitable records where `outreach_status = 'not_started'`.
+3. `Outreach`: suitable records with `message_sent`, `follow_up_sent`, or `active_conversation`.
+4. `Closed`: records where `outreach_status = 'closed'`.
+5. `Rejected`: records with either lost outreach status, plus `fit_status = 'not_interesting'` unless outreach is `closed`.
 
-Needs-action behavior:
-
-1. The sidebar `Needs action` filter includes suitable companies where `outreach_status in ('not_started', 'follow_up_needed')`.
-2. `not_interesting` companies are excluded from `Needs action`.
+Workflow stage assignment is exclusive and runs in this order: Closed, Rejected, Outreach, Shortlist, then Inspect. Terminal outreach statuses remove a record from Shortlist and Outreach. Starting outreach removes a record from Shortlist and moves it to Outreach. `closed` takes precedence over `fit_status = 'not_interesting'`, so a conflicting record appears in Closed rather than Rejected. Saving a status reruns the app but does not automatically switch the selected workflow view; a changed record disappears from the current view and appears in the destination view.
 
 ## Error Handling
 
@@ -458,11 +470,12 @@ Unit tests for `inspection_app.py` pure helpers:
 
 1. Fit status filter matches selected statuses.
 2. Outreach status filter matches selected statuses.
-3. Needs-action filter includes suitable `not_started` and `follow_up_needed` companies.
-4. Shortlist tab helper returns `best_fit` and `possible_fit` only.
-5. Outreach tab helper excludes `not_started`.
-6. Rejected tab helper returns `not_interesting` only.
-7. Company table rows include fit and outreach status.
+3. Shortlist tab helper returns only suitable leads whose outreach has not started.
+4. Outreach tab helper returns only active suitable leads.
+5. Closed tab helper returns `closed` leads regardless of fit status.
+6. Rejected tab helper returns fit rejections and both lost outreach statuses.
+7. Closed status takes precedence over a rejected fit status.
+8. Company table rows include fit and outreach status.
 
 Integration-style tests with monkeypatching:
 
@@ -580,9 +593,8 @@ Scope:
 1. Add reviewer-name input.
 2. Add fit/outreach filters.
 3. Add fit/outreach table columns.
-4. Add `Inspect`, `Shortlist`, `Outreach`, and `Rejected` tabs.
+4. Add `Inspect`, `Shortlist`, `Outreach`, `Closed`, and `Rejected` tabs.
 5. Add selected-company save form.
-6. Add needs-action filtering.
 
 Files likely changed:
 

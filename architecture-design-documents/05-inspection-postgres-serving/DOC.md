@@ -1,5 +1,7 @@
 # Inspection Postgres Serving
 
+> **Partially superseded (2026-07-20):** The snapshot schema and Python synchronization model remain active. The Streamlit reader and JSONL/artifact fallback described here have been removed; the current consumer is the React application documented in `frontend/README.md`, using the RPC boundary in `supabase/README.md`.
+
 ## Status
 
 Draft

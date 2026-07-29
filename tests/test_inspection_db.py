@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -159,106 +158,6 @@ def test_sync_inspection_database_rolls_back_on_snapshot_insert_failure(
         )
 
     assert conn.events == ["begin", "rollback"]
-
-
-def test_load_company_inspection_data_from_database_returns_dataset(monkeypatch) -> None:
-    synced_at = datetime(2026, 7, 2, 10, 30, tzinfo=timezone.utc)
-    conn = FakeConnection(
-        fetchall_rows=[
-            [
-                {
-                    "detail_payload": _record(raw_company_record=None, raw_company_enrichment_record=None),
-                    "synced_at": synced_at,
-                }
-            ]
-        ]
-    )
-
-    def fake_connect(database_url: str, **kwargs: object) -> FakeConnection:
-        conn.connect_calls.append({"database_url": database_url, "kwargs": kwargs})
-        return conn
-
-    monkeypatch.setattr(inspection_db.psycopg, "connect", fake_connect)
-
-    dataset = inspection_db.load_company_inspection_data_from_database(
-        "2026-07-02",
-        database_url="postgres://test",
-    )
-
-    assert dataset is not None
-    assert dataset.collection_date == "2026-07-02"
-    assert dataset.data_source == "database"
-    assert dataset.synced_at == "2026-07-02T10:30:00+00:00"
-    assert dataset.counts.companies_loaded == 1
-    assert dataset.counts.candidates_loaded == 1
-    assert dataset.counts.job_description_extracts_loaded == 1
-    assert dataset.counts.company_enrichments_loaded == 1
-    assert dataset.missing_optional_files == []
-    assert conn.connect_calls[0]["database_url"] == "postgres://test"
-    assert conn.connect_calls[0]["kwargs"]["row_factory"] == inspection_db.dict_row
-
-
-def test_load_company_inspection_data_from_database_returns_none_when_unsynced(
-    monkeypatch,
-) -> None:
-    conn = FakeConnection(fetchall_rows=[[]])
-
-    def fake_connect(database_url: str, **kwargs: object) -> FakeConnection:
-        return conn
-
-    monkeypatch.setattr(inspection_db.psycopg, "connect", fake_connect)
-
-    assert (
-        inspection_db.load_company_inspection_data_from_database(
-            "2026-07-02",
-            database_url="postgres://test",
-        )
-        is None
-    )
-
-
-def test_load_company_inspection_data_from_database_returns_empty_synced_dataset(
-    monkeypatch,
-) -> None:
-    synced_at = datetime(2026, 7, 2, 10, 30, tzinfo=timezone.utc)
-    conn = FakeConnection(fetchall_rows=[[]], fetchone_rows=[{"synced_at": synced_at}])
-
-    def fake_connect(database_url: str, **kwargs: object) -> FakeConnection:
-        return conn
-
-    monkeypatch.setattr(inspection_db.psycopg, "connect", fake_connect)
-
-    dataset = inspection_db.load_company_inspection_data_from_database(
-        "2026-07-02",
-        database_url="postgres://test",
-    )
-
-    assert dataset is not None
-    assert dataset.records == []
-    assert dataset.data_source == "database"
-    assert dataset.synced_at == "2026-07-02T10:30:00+00:00"
-    assert dataset.counts.companies_loaded == 0
-
-
-def test_list_synced_collection_dates_returns_normalized_dates(monkeypatch) -> None:
-    conn = FakeConnection(
-        fetchall_rows=[
-            [
-                {"collection_date": date(2026, 7, 1)},
-                {"collection_date": "2026-07-02"},
-            ]
-        ]
-    )
-
-    def fake_connect(database_url: str, **kwargs: object) -> FakeConnection:
-        return conn
-
-    monkeypatch.setattr(inspection_db.psycopg, "connect", fake_connect)
-
-    assert inspection_db.list_synced_collection_dates(database_url="postgres://test") == [
-        "2026-07-01",
-        "2026-07-02",
-    ]
 
 
 def _write_sync_fixture(data_dir: Path) -> None:

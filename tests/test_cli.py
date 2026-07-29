@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-import subprocess
-import sys
 from types import SimpleNamespace
 from typing import Any
 
@@ -472,53 +470,6 @@ def test_enrich_companies_uses_azure_settings(monkeypatch) -> None:
     assert calls[0]["model"] == "gpt-5-mini"
 
 
-def test_inspect_launches_streamlit_with_normalized_date(monkeypatch) -> None:
-    calls: list[str] = []
-
-    monkeypatch.setattr(cli, "_launch_inspection_app", calls.append)
-
-    result = runner.invoke(
-        cli.app,
-        [
-            "inspect",
-            "--date",
-            "2026-07-02",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert calls == ["2026-07-02"]
-    assert "Launching company inspection UI for 2026-07-02" in result.output
-
-
-def test_export_inspection_writes_artifact(monkeypatch) -> None:
-    calls: list[str] = []
-
-    def fake_export(collection_date: str) -> SimpleNamespace:
-        calls.append(collection_date)
-        return SimpleNamespace(
-            path=Path("data/processed/inspection_companies_2026-07-02.jsonl"),
-            company_count=2,
-            job_count=3,
-        )
-
-    monkeypatch.setattr(cli, "export_company_inspection_artifact", fake_export)
-
-    result = runner.invoke(
-        cli.app,
-        [
-            "export-inspection",
-            "--date",
-            "2026-07-02",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert calls == ["2026-07-02"]
-    assert "Inspection artifact complete: 2 company record(s), 3 job record(s)." in result.output
-    assert "data/processed/inspection_companies_2026-07-02.jsonl" in result.output
-
-
 def test_sync_inspection_db_parses_date_and_uses_database_url(monkeypatch) -> None:
     calls: list[dict[str, object]] = []
 
@@ -594,55 +545,6 @@ def test_sync_inspection_db_rejects_invalid_date() -> None:
 
     assert result.exit_code != 0
     assert "Date must use YYYY-MM-DD format" in result.output
-
-
-def test_inspect_rejects_invalid_date() -> None:
-    result = runner.invoke(
-        cli.app,
-        [
-            "inspect",
-            "--date",
-            "not-a-date",
-        ],
-    )
-
-    assert result.exit_code != 0
-    assert "Date must use YYYY-MM-DD format" in result.output
-
-
-def test_inspect_propagates_streamlit_exit_code(monkeypatch) -> None:
-    def fail_launcher(collection_date: str) -> None:
-        raise subprocess.CalledProcessError(returncode=7, cmd=["streamlit", collection_date])
-
-    monkeypatch.setattr(cli, "_launch_inspection_app", fail_launcher)
-
-    result = runner.invoke(
-        cli.app,
-        [
-            "inspect",
-            "--date",
-            "2026-07-02",
-        ],
-    )
-
-    assert result.exit_code == 7
-
-
-def test_launch_inspection_app_runs_streamlit_module(monkeypatch) -> None:
-    calls: list[dict[str, Any]] = []
-
-    def fake_run(command: list[str], *, check: bool) -> None:
-        calls.append({"command": command, "check": check})
-
-    monkeypatch.setattr(cli.subprocess, "run", fake_run)
-
-    cli._launch_inspection_app("2026-07-02")
-
-    command = calls[0]["command"]
-    assert calls[0]["check"] is True
-    assert command[:4] == [sys.executable, "-m", "streamlit", "run"]
-    assert command[-3:] == ["--", "--date", "2026-07-02"]
-    assert command[4].endswith("inspection_app.py")
 
 
 def _install_cli_spec(
