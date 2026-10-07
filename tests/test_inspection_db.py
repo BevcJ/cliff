@@ -16,8 +16,11 @@ def _record(**overrides: Any) -> dict[str, Any]:
         "countries": ["Netherlands"],
         "sources": ["lever"],
         "role_classification": "AI Execution Role",
+        "role_groups": ["AI Execution Role", "Machine Learning Role"],
         "ai_execution_titles": ["AI Engineer"],
         "ai_product_titles": [],
+        "data_science_titles": ["Data Scientist"],
+        "machine_learning_titles": ["Machine Learning Engineer"],
         "ai_role_title_counts": [{"title": "Senior AI Engineer", "count": 1}],
         "matched_search_terms": ["AI Engineer"],
         "industry": "Software",
@@ -80,6 +83,10 @@ def test_build_inspection_company_snapshot_columns_and_search_text() -> None:
     assert snapshot["ai_team_contexts"] == ["existing_ai_team"]
     assert snapshot["delivery_contexts"] == ["internal"]
     assert snapshot["role_classification"] == "AI Execution Role"
+    assert snapshot["role_groups"] == [
+        "AI Execution Role",
+        "Machine Learning Role",
+    ]
     assert snapshot["company_type"] == "ai_native"
     assert snapshot["company_size"] == "101-500"
     assert snapshot["ai_tech_forward_signal"] == "strong"
@@ -91,6 +98,8 @@ def test_build_inspection_company_snapshot_columns_and_search_text() -> None:
     assert "Acme AI" in snapshot["search_text"]
     assert "Software" in snapshot["search_text"]
     assert "Senior AI Engineer" in snapshot["search_text"]
+    assert "Data Scientist" in snapshot["search_text"]
+    assert "Machine Learning Engineer" in snapshot["search_text"]
     assert "Secret plain description" not in snapshot["search_text"]
     assert "jobs" not in snapshot["summary_payload"]
 
@@ -134,7 +143,9 @@ def test_sync_inspection_database_replaces_existing_date_rows(monkeypatch, tmp_p
     )
     snapshot_call = next(call for call in conn.calls if call["kind"] == "executemany")
     assert len(snapshot_call["params_seq"]) == 1
+    assert "role_groups" in snapshot_call["query"]
     assert snapshot_call["params_seq"][0]["company_key"] == "acme ai"
+    assert snapshot_call["params_seq"][0]["role_groups"] == ["Data Science Role"]
     assert snapshot_call["params_seq"][0]["job_count"] == 1
 
 
@@ -168,6 +179,8 @@ def _write_sync_fixture(data_dir: Path) -> None:
                 "record_type": "company_intelligence_title_only",
                 "company": "Acme AI",
                 "countries": ["Netherlands"],
+                "role_groups": ["Data Science Role"],
+                "data_science_titles": ["Data Scientist"],
                 "sources": ["lever"],
             }
         ],

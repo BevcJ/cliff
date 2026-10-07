@@ -29,7 +29,27 @@ def test_process_collection_and_export_files(tmp_path) -> None:
                             "employmentType": "FullTime",
                             "secondaryLocations": [],
                             "compensationTierSummary": None,
-                        }
+                        },
+                        {
+                            "id": "job-data-scientist",
+                            "title": "Senior Data Scientist",
+                            "teamId": "team-ai",
+                            "locationName": "Netherlands",
+                            "workplaceType": "Hybrid",
+                            "employmentType": "FullTime",
+                            "secondaryLocations": [],
+                            "compensationTierSummary": None,
+                        },
+                        {
+                            "id": "job-ml-engineer",
+                            "title": "Staff ML Engineer",
+                            "teamId": "team-ai",
+                            "locationName": "Netherlands",
+                            "workplaceType": "Remote",
+                            "employmentType": "FullTime",
+                            "secondaryLocations": [],
+                            "compensationTierSummary": None,
+                        },
                     ],
                 }
             }
@@ -45,21 +65,41 @@ def test_process_collection_and_export_files(tmp_path) -> None:
     processing_result = process_collection("2026-06-13", data_dir=tmp_path)
 
     assert processing_result.raw_file_count == 1
-    assert processing_result.candidate_count == 1
-    assert processing_result.deduped_candidate_count == 1
+    assert processing_result.candidate_count == 3
+    assert processing_result.deduped_candidate_count == 3
     assert processing_result.company_count == 1
 
     candidates = read_jsonl(processing_result.job_candidates_path)
     assert candidates[0]["company_normalized"] == "Example Ai"
     assert candidates[0]["job_title_normalized"] == "AI Product Manager"
     assert candidates[0]["role_group"] == "AI Product Role"
+    assert candidates[1]["job_title_normalized"] == "Data Scientist"
+    assert candidates[1]["role_group"] == "Data Science Role"
+    assert candidates[2]["job_title_normalized"] == "Machine Learning Engineer"
+    assert candidates[2]["role_group"] == "Machine Learning Role"
 
     companies = read_jsonl(processing_result.companies_path)
     assert companies[0]["company"] == "Example Ai"
-    assert companies[0]["matched_search_terms"] == ["AI Product Manager"]
+    assert companies[0]["matched_search_terms"] == [
+        "AI Product Manager",
+        "Data Scientist",
+        "Machine Learning Engineer",
+    ]
+    assert companies[0]["role_classification"] == "Multiple Role Groups"
+    assert companies[0]["role_groups"] == [
+        "AI Product Role",
+        "Data Science Role",
+        "Machine Learning Role",
+    ]
+    assert companies[0]["data_science_titles"] == ["Data Scientist"]
+    assert companies[0]["machine_learning_titles"] == [
+        "Machine Learning Engineer"
+    ]
     assert companies[0]["evidence_urls"] == ["https://jobs.ashbyhq.com/example-ai"]
     assert companies[0]["ai_role_title_counts"] == [
-        {"title": "AI Product Manager", "count": 1}
+        {"title": "AI Product Manager", "count": 1},
+        {"title": "Senior Data Scientist", "count": 1},
+        {"title": "Staff ML Engineer", "count": 1},
     ]
     assert companies[0]["review_status"] == "new"
 
@@ -68,10 +108,20 @@ def test_process_collection_and_export_files(tmp_path) -> None:
     assert export_result.company_count == 1
     csv_content = export_result.csv_path.read_text(encoding="utf-8")
     markdown_content = export_result.markdown_path.read_text(encoding="utf-8")
-    assert "Company,Countries,Role Classification" in csv_content
+    assert "Company,Countries,Role Classification,Role Groups" in csv_content
     assert "AI Role Title Counts" in csv_content
     assert "AI Product Manager (1)" in csv_content
+    assert "Data Scientist" in csv_content
+    assert "Machine Learning Engineer" in csv_content
     assert "Example Ai" in csv_content
     assert "## AI Product Role" in markdown_content
-    assert "| Company | Countries | Titles | Role Title Counts |" in markdown_content
+    assert (
+        "| Company | Countries | Role Groups | Titles | Role Title Counts |"
+        in markdown_content
+    )
     assert "AI Product Manager (1)" in markdown_content
+    assert "Data Scientist" in markdown_content
+    assert "Machine Learning Engineer" in markdown_content
+    assert "## Data Science Role" in markdown_content
+    assert "## Machine Learning Role" in markdown_content
+    assert "## Multiple Role Groups" in markdown_content

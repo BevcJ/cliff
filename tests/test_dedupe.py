@@ -1,5 +1,6 @@
 from typing import Any
 
+from ai_hiring_radar.aggregate import aggregate_companies
 from ai_hiring_radar.dedupe import dedupe_job_candidates
 
 
@@ -70,6 +71,67 @@ def test_dedupe_same_company_title_country_after_url_pass() -> None:
             "role_group": "AI Product Role",
         },
     ]
+
+
+def test_dedupe_promotes_same_posting_role_evidence_from_unclear() -> None:
+    deduped = dedupe_job_candidates(
+        [
+            _candidate(role_group="Unclear AI Role"),
+            _candidate(
+                role_group="Machine Learning Role",
+                job_title_normalized="Machine Learning Engineer",
+            ),
+        ]
+    )
+
+    assert deduped[0]["all_postings"][0]["role_group"] == "Machine Learning Role"
+
+
+def test_dedupe_preserves_distinct_known_groups_for_same_posting() -> None:
+    deduped = dedupe_job_candidates(
+        [
+            _candidate(role_group="AI Product Role"),
+            _candidate(
+                role_group="AI Execution Role",
+                job_title_normalized="AI Engineer",
+                role_search_term="AI Engineer",
+            ),
+        ]
+    )
+
+    assert [
+        posting["role_group"] for posting in deduped[0]["all_postings"]
+    ] == ["AI Product Role", "AI Execution Role"]
+    company = aggregate_companies(deduped)[0]
+    assert company["role_groups"] == ["AI Execution Role", "AI Product Role"]
+    assert company["ai_role_title_counts"] == [
+        {"title": "AI Product Manager - Example Company", "count": 1}
+    ]
+
+
+def test_aggregate_preserves_role_groups_from_deduped_postings() -> None:
+    deduped = dedupe_job_candidates(
+        [
+            _candidate(
+                job_title_raw="AI Leadership Role",
+                job_title_normalized="AI Leadership Role",
+                role_group="AI Product Role",
+                source_url="https://example.com/jobs/1",
+            ),
+            _candidate(
+                job_title_raw="AI Leadership Role",
+                job_title_normalized="AI Leadership Role",
+                role_group="AI Execution Role",
+                role_search_term="AI Engineer",
+                source_url="https://example.com/jobs/2",
+            ),
+        ]
+    )
+
+    assert len(deduped) == 1
+    company = aggregate_companies(deduped)[0]
+    assert company["role_classification"] == "Both Execution + Product"
+    assert company["role_groups"] == ["AI Execution Role", "AI Product Role"]
 
 
 def test_dedupe_missing_company_uses_raw_title_role_country() -> None:

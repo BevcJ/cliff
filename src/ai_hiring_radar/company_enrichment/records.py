@@ -46,8 +46,15 @@ def build_enrichment_record(
         "company_key": slugify(company or "unknown"),
         "countries": _clean_sequence(company_record.get("countries")),
         "role_classification": clean_scalar(company_record.get("role_classification")),
+        "role_groups": _clean_sequence(company_record.get("role_groups")),
         "ai_execution_titles": _clean_sequence(company_record.get("ai_execution_titles")),
         "ai_product_titles": _clean_sequence(company_record.get("ai_product_titles")),
+        "data_science_titles": _clean_sequence(
+            company_record.get("data_science_titles")
+        ),
+        "machine_learning_titles": _clean_sequence(
+            company_record.get("machine_learning_titles")
+        ),
         "ai_role_title_counts": _clean_mapping_sequence(
             company_record.get("ai_role_title_counts")
         ),

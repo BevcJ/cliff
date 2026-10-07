@@ -417,6 +417,31 @@ def test_collect_ashby_boards_writes_raw_response_and_manifest(tmp_path) -> None
     assert manifest["resumed_files"] == result.resumed_files
 
 
+def test_collect_ashby_boards_fetches_details_for_data_science_and_ml_roles(
+    tmp_path,
+) -> None:
+    response = _sample_ashby_response()
+    response["data"]["jobBoard"]["jobPostings"].extend(
+        [
+            {"id": "job-data-scientist", "title": "Senior Data Scientist"},
+            {"id": "job-ml-engineer", "title": "Staff ML Engineer"},
+            {"id": "job-mlops", "title": "MLOps Engineer"},
+        ]
+    )
+    client = FakeAshbyClient(response)
+
+    collect_ashby_boards(
+        ["https://jobs.ashbyhq.com/everai"],
+        client=client,  # type: ignore[arg-type]
+        data_dir=tmp_path,
+        clock=lambda: "2026-06-16T10:00:00Z",
+    )
+
+    fetched_ids = {job_id for _, job_id in client.fetched_job_details}
+    assert {"job-data-scientist", "job-ml-engineer"}.issubset(fetched_ids)
+    assert "job-mlops" not in fetched_ids
+
+
 def test_collect_ashby_boards_resumes_valid_raw_file(tmp_path) -> None:
     board = ashby_board_from_slug("everai")
     raw_path = write_raw_ats_response(

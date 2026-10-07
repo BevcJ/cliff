@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Design Document: Data Science and Machine Learning Roles</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f4f7f3;
+      --fg: #17231d;
+      --muted: #57645d;
+      --line: #cbd6ce;
+      --panel: #fcfdfb;
+      --accent: #176b52;
+      --accent-2: #885b18;
+      --code: #e8eee9;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 85% 0, color-mix(in srgb, var(--accent-2) 14%, transparent), transparent 26rem),
+        linear-gradient(135deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 36rem),
+        var(--bg);
+      color: var(--fg);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.62;
+    }
+
+    main {
+      width: min(1160px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 48px 0 88px;
+    }
+
+    header.hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+      gap: 30px;
+      align-items: end;
+      padding-bottom: 34px;
+      border-bottom: 2px solid var(--line);
+    }
+
+    h1, h2, h3 {
+      line-height: 1.16;
+      margin: 0 0 14px;
+    }
+
+    h1 {
+      max-width: 13ch;
+      font-size: clamp(2.5rem, 5vw, 5rem);
+      letter-spacing: -0.055em;
+    }
+
+    h2 {
+      padding-top: 20px;
+      font-size: clamp(1.55rem, 2.5vw, 2.3rem);
+      letter-spacing: -0.03em;
+    }
+
+    h3 {
+      font-size: 1.12rem;
+    }
+
+    section {
+      margin: 42px 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    tr:last-child th,
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    pre, code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      background: var(--code);
+      border-radius: 7px;
+    }
+
+    code {
+      padding: 0.1em 0.3em;
+    }
+
+    pre {
+      padding: 16px;
+      border: 1px solid var(--line);
+      overflow-x: auto;
+    }
+
+    .callout {
+      padding: 13px 16px;
+      border-left: 4px solid var(--accent);
+      background: color-mix(in srgb, var(--accent) 9%, transparent);
+      color: var(--muted);
+    }
+
+    .scope-grid,
+    .flow-grid,
+    .module-grid,
+    .task-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .card,
+    .edge-case,
+    .story,
+    .decision,
+    .task,
+    .upgrade-path {
+      padding: 18px;
+      margin: 16px 0;
+      background: color-mix(in srgb, var(--panel) 95%, var(--accent));
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: 0 12px 36px color-mix(in srgb, var(--fg) 7%, transparent);
+    }
+
+    .scope-grid .card,
+    .flow-grid .card,
+    .module-grid .card,
+    .task-grid .task {
+      margin: 0;
+    }
+
+    .in-scope {
+      border-top: 4px solid var(--accent);
+    }
+
+    .out-of-scope {
+      border-top: 4px solid var(--accent-2);
+    }
+
+    .pill-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 0;
+      list-style: none;
+    }
+
+    .pill-list li {
+      padding: 5px 10px;
+      border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+      color: var(--muted);
+    }
+
+    .dependency {
+      color: var(--muted);
+      font-size: 0.93rem;
+    }
+
+    @media (max-width: 760px) {
+      header.hero {
+        grid-template-columns: 1fr;
+      }
+
+      main {
+        width: min(100% - 22px, 1160px);
+        padding-top: 28px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main data-design-doc-version="1" data-document-id="11-data-science-machine-learning-roles">
+    <header class="hero" id="top">
+      <div>
+        <p>Canonical Design Document</p>
+        <h1 id="title">Data Science and Machine Learning Roles</h1>
+        <p class="callout">Widen job discovery and title filtering to include core Data Science and Machine Learning roles while preserving distinct canonical titles, role groups, and company-level classification data.</p>
+      </div>
+      <table aria-label="Document metadata">
+        <tbody>
+          <tr><th scope="row">Status</th><td>Draft</td></tr>
+          <tr><th scope="row">Author</th><td>OpenCode</td></tr>
+          <tr><th scope="row">Created</th><td>2026-07-29</td></tr>
+          <tr><th scope="row">Last Updated</th><td>2026-07-29</td></tr>
+          <tr><th scope="row">Epic</th><td>-</td></tr>
+          <tr><th scope="row">Related</th><td>06 Normalization Refactor; ATS provider integrations; Inspection Postgres serving</td></tr>
+        </tbody>
+      </table>
+    </header>
+
+    <section id="overview" aria-labelledby="overview-heading">
+      <h2 id="overview-heading">1. Overview</h2>
+      <section id="problem-statement" aria-labelledby="problem-statement-heading">
+        <h3 id="problem-statement-heading">1.1 Problem Statement</h3>
+        <p>The hiring radar currently treats a job as interesting when its title matches a configured AI execution or AI product role, or contains a broader AI signal. This intentionally excludes ordinary Data Science and Machine Learning jobs. As a result, titles such as <code>Data Scientist</code>, <code>Machine Learning Engineer</code>, and <code>ML Engineer</code> are either discarded by the ATS title prefilter or do not receive a useful canonical role label during normalization.</p>
+        <p>The prefilter and normalization stages are not separate taxonomies. All ATS collectors and normalizers call the shared functions in <code>classify.py</code>. The expansion therefore needs one central taxonomy change, followed by propagation of the new role groups through aggregation, exports, enrichment inputs, inspection snapshots, and database storage.</p>
+        <p>Reusing <code>AI Execution Role</code> would retain the jobs but would erase the distinction requested by the business. Broad keyword matching for <code>data science</code> or <code>machine learning</code> would create a different problem by admitting managers, research roles, MLOps, platforms, and other adjacent positions that have not been approved.</p>
+      </section>
+
+      <section id="proposed-solution" aria-labelledby="proposed-solution-heading">
+        <h3 id="proposed-solution-heading">1.2 Proposed Solution</h3>
+        <p>Add two narrow role families to the central taxonomy:</p>
+        <ul class="pill-list">
+          <li>Data Scientist</li>
+          <li>Data Science Role</li>
+          <li>Machine Learning Engineer</li>
+          <li>Machine Learning Role</li>
+          <li>ML Engineer alias</li>
+        </ul>
+        <p>The same matcher will admit these titles during collection prefiltering and normalization. Normalization will always emit canonical titles, so <code>Senior ML Engineer</code> becomes <code>Machine Learning Engineer</code>, never <code>AI Engineer</code>. Discovery will search the two canonical titles plus the approved <code>ML Engineer</code> alias.</p>
+        <p>Company aggregation will store every unique observed job role group in a new <code>role_groups</code> array. The existing scalar <code>role_classification</code> remains as a compatibility and display summary. Filtering by the array is deliberately deferred, but the array will be persisted as a first-class Postgres column so a later filter can use indexed array-overlap semantics.</p>
+      </section>
+
+      <section id="terminology" aria-labelledby="terminology-heading">
+        <h3 id="terminology-heading">1.3 Terminology</h3>
+        <table>
+          <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+          <tbody>
+            <tr><td>Canonical title</td><td>The normalized job title stored in <code>job_title_normalized</code>, for example <code>Machine Learning Engineer</code>.</td></tr>
+            <tr><td>Matching alias</td><td>An alternative phrase accepted by the title matcher but normalized to a canonical title, for example <code>ML Engineer</code>.</td></tr>
+            <tr><td>Discovery term</td><td>A phrase used to generate role-based search queries. Discovery terms are intentionally narrower than all matching aliases.</td></tr>
+            <tr><td>Role group</td><td>The broad classification stored on a job, for example <code>Machine Learning Role</code>.</td></tr>
+            <tr><td>Company role groups</td><td>The unique set of job role groups observed for a company in one processed collection.</td></tr>
+            <tr><td>First phrase</td><td>The known role phrase with the earliest start position in the normalized raw title.</td></tr>
+          </tbody>
+        </table>
+      </section>
+    </section>
+
+    <section id="scope" aria-labelledby="scope-heading">
+      <h2 id="scope-heading">2. Scope</h2>
+      <div class="scope-grid">
+        <article class="card in-scope" id="in-scope">
+          <h3>In Scope</h3>
+          <ul>
+            <li><code>Data Scientist</code>, including seniority or team modifiers around the canonical phrase.</li>
+            <li><code>Machine Learning Engineer</code>, including seniority or team modifiers around the canonical phrase.</li>
+            <li><code>ML Engineer</code> as a matching and discovery alias for <code>Machine Learning Engineer</code>.</li>
+            <li>Distinct job role groups for Data Science and Machine Learning.</li>
+            <li>All unique company role groups persisted in JSON and Postgres.</li>
+            <li>Reprocessing the latest complete retained raw ATS collection.</li>
+          </ul>
+        </article>
+        <article class="card out-of-scope" id="out-of-scope">
+          <h3>Explicitly Out of Scope</h3>
+          <ul>
+            <li><code>MLOps Engineer</code> and ML platform roles.</li>
+            <li><code>Applied Scientist</code>, <code>Research Scientist</code>, and <code>ML Scientist</code>.</li>
+            <li><code>Data Science Manager</code>, <code>Head of Data Science</code>, and similar leadership-only titles.</li>
+            <li><code>Data Analyst</code>, <code>Data Engineer</code>, BI, and generic analytics roles.</li>
+            <li>Generic discovery signals for <code>data science</code> or <code>machine learning</code>.</li>
+            <li>Inspection API or UI filters for the new <code>role_groups</code> array.</li>
+            <li>Board rediscovery or network recollection for the historical backfill.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="architecture" aria-labelledby="architecture-heading">
+      <h2 id="architecture-heading">3. Architecture</h2>
+      <div class="flow-grid">
+        <section class="card" id="current-flow" aria-labelledby="current-flow-heading">
+          <h3 id="current-flow-heading">3.1 Current Flow</h3>
+          <pre><code>taxonomy.yaml
+  -&gt; TaxonomyConfig.all_roles
+  -&gt; discovery queries
+  -&gt; is_ai_role_title_candidate(raw title)
+       -&gt; ATS detail fetch decision
+       -&gt; normalizer inclusion gate
+  -&gt; normalize_job_title()
+  -&gt; classify_role()
+  -&gt; dedupe and company aggregation
+  -&gt; exports and inspection snapshots</code></pre>
+        </section>
+        <section class="card" id="proposed-flow" aria-labelledby="proposed-flow-heading">
+          <h3 id="proposed-flow-heading">3.2 Proposed Flow</h3>
+          <pre><code>taxonomy.yaml
+  -&gt; canonical roles + matching aliases
+  -&gt; canonical roles + approved discovery aliases
+  -&gt; shared first-phrase matcher
+       -&gt; shared ATS prefilter
+       -&gt; shared normalization
+       -&gt; canonical title + distinct role group
+  -&gt; dedupe and company aggregation
+       -&gt; role_groups[]
+       -&gt; category title lists
+  -&gt; exports and inspection snapshots
+  -&gt; Postgres role_groups[]</code></pre>
+        </section>
+      </div>
+
+      <section id="taxonomy-contract" aria-labelledby="taxonomy-contract-heading">
+        <h3 id="taxonomy-contract-heading">3.3 Taxonomy Contract</h3>
+        <p>The YAML structure will distinguish roles, aliases, and discovery aliases. This prevents plural or normalization-only aliases from automatically increasing query volume.</p>
+        <pre><code>data_science_roles:
+  - Data Scientist
+
+machine_learning_roles:
+  - Machine Learning Engineer
+
+role_aliases:
+  Machine Learning Engineer:
+    - ML Engineer
+
+discovery_role_aliases:
+  - ML Engineer</code></pre>
+        <p><code>TaxonomyConfig.all_roles</code> remains the canonical role list. A separate discovery property combines canonical roles with approved discovery aliases. Alias validation must reject references to unknown canonical titles.</p>
+      </section>
+
+      <section id="matching-contract" aria-labelledby="matching-contract-heading">
+        <h3 id="matching-contract-heading">3.4 Matching and Precedence</h3>
+        <ol>
+          <li>Clean and tokenize the raw title using the existing punctuation-insensitive phrase normalization.</li>
+          <li>Apply the existing AI trainer exclusion before accepting any role match.</li>
+          <li>Find every canonical role or matching alias present as a complete phrase.</li>
+          <li>Select the match with the earliest phrase position in the raw title.</li>
+          <li>If matches start at the same position, select the most specific match using phrase length.</li>
+          <li>Return the canonical title and its configured role group.</li>
+        </ol>
+        <table>
+          <thead><tr><th>Raw title</th><th>Normalized title</th><th>Role group</th></tr></thead>
+          <tbody>
+            <tr><td>Senior Data Scientist</td><td>Data Scientist</td><td>Data Science Role</td></tr>
+            <tr><td>Principal Machine Learning Engineer</td><td>Machine Learning Engineer</td><td>Machine Learning Role</td></tr>
+            <tr><td>Staff ML Engineer</td><td>Machine Learning Engineer</td><td>Machine Learning Role</td></tr>
+            <tr><td>Data Scientist / AI Engineer</td><td>Data Scientist</td><td>Data Science Role</td></tr>
+            <tr><td>AI Engineer / Data Scientist</td><td>AI Engineer</td><td>AI Execution Role</td></tr>
+            <tr><td>Machine Learning Engineer - AI Trainer</td><td>Rejected</td><td>-</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="shared-gate" aria-labelledby="shared-gate-heading">
+        <h3 id="shared-gate-heading">3.5 Shared Prefilter and Normalization Gate</h3>
+        <p>No provider-specific role lists will be introduced. Ashby, Greenhouse, Lever, Personio, Recruitee, SmartRecruiters, Teamtailor, and Workable already call <code>is_ai_role_title_candidate()</code> during collection metadata, detail-fetch selection, normalization, or all three. Expanding the central matcher changes all providers consistently.</p>
+        <p>Ashby, Recruitee, and Workable use this decision before requesting detail payloads. Future collections will therefore fetch details for the new role families. Historical raw collections may contain only listing-level data for jobs rejected by the old prefilter.</p>
+      </section>
+    </section>
+
+    <section id="data-contract" aria-labelledby="data-contract-heading">
+      <h2 id="data-contract-heading">4. Data Contract and Persistence</h2>
+      <table>
+        <thead><tr><th>Field</th><th>Level</th><th>Change</th></tr></thead>
+        <tbody>
+          <tr><td><code>job_title_normalized</code></td><td>Job</td><td>May now contain <code>Data Scientist</code> or <code>Machine Learning Engineer</code>.</td></tr>
+          <tr><td><code>role_group</code></td><td>Job</td><td>Add <code>Data Science Role</code> and <code>Machine Learning Role</code>.</td></tr>
+          <tr><td><code>role_groups</code></td><td>Company</td><td>New ordered unique array containing all observed job role groups, including unclear when present.</td></tr>
+          <tr><td><code>role_classification</code></td><td>Company</td><td>Retained scalar summary for compatibility and current UI display.</td></tr>
+          <tr><td><code>data_science_titles</code></td><td>Company</td><td>New unique list of normalized Data Science titles.</td></tr>
+          <tr><td><code>machine_learning_titles</code></td><td>Company</td><td>New unique list of normalized Machine Learning titles.</td></tr>
+        </tbody>
+      </table>
+
+      <section id="company-summary" aria-labelledby="company-summary-heading">
+        <h3 id="company-summary-heading">4.1 Company Summary Rules</h3>
+        <p><code>role_groups</code> is the source of truth for multi-valued company classification. Values are emitted in a fixed role-group order for deterministic JSON and tests.</p>
+        <table>
+          <thead><tr><th>Known groups present</th><th><code>role_classification</code></th></tr></thead>
+          <tbody>
+            <tr><td>None</td><td>Unclear AI Role</td></tr>
+            <tr><td>Exactly one</td><td>That role group</td></tr>
+            <tr><td>AI Execution Role + AI Product Role</td><td>Both Execution + Product</td></tr>
+            <tr><td>Any other combination of two or more known groups</td><td>Multiple Role Groups</td></tr>
+          </tbody>
+        </table>
+        <p>An unclear role does not replace a known scalar summary, but it remains visible in <code>role_groups</code> when the company has both known and unclear jobs.</p>
+      </section>
+
+      <section id="postgres-storage" aria-labelledby="postgres-storage-heading">
+        <h3 id="postgres-storage-heading">4.2 Postgres Storage</h3>
+        <p>Add <code>role_groups text[] not null default '{}'</code> to <code>inspection_company_snapshots</code> and create a GIN index. The Python inspection sync writes the field and includes it in the compact detail payload. Existing rows remain valid through the empty-array default.</p>
+        <p>This feature does not alter the inspection filter RPCs or React filter rail. A later feature can use the indexed array column with overlap semantics to match companies containing any selected role group.</p>
+      </section>
+    </section>
+
+    <section id="impacted-modules" aria-labelledby="impacted-modules-heading">
+      <h2 id="impacted-modules-heading">5. Impacted Modules</h2>
+      <div class="module-grid">
+        <article class="card" id="module-taxonomy">
+          <h3>Taxonomy and Models</h3>
+          <p><code>configs/taxonomy.yaml</code>, <code>config.py</code>, and <code>models.py</code> gain the new canonical role lists, aliases, discovery terms, role groups, and mixed-company summary.</p>
+        </article>
+        <article class="card" id="module-classification">
+          <h3>Classification</h3>
+          <p><code>classify.py</code> builds canonical and alias matches, records match position, and applies first-phrase precedence. <code>normalizers/common/roles.py</code> receives canonical results from the same matcher.</p>
+        </article>
+        <article class="card" id="module-discovery">
+          <h3>Discovery</h3>
+          <p><code>cli.py</code> uses canonical roles plus <code>ML Engineer</code> for role search generation and accepts the alias as a selected role term. Generic ATS signal terms remain unchanged.</p>
+        </article>
+        <article class="card" id="module-aggregation">
+          <h3>Aggregation and Export</h3>
+          <p><code>aggregate.py</code> counts and groups the new roles. <code>export.py</code> includes new title columns and role sections without hiding mixed-company role data.</p>
+        </article>
+        <article class="card" id="module-enrichment-inspection">
+          <h3>Enrichment and Inspection</h3>
+          <p>Company enrichment inputs and records preserve the title lists and role groups. Inspection snapshots include the new fields and search text includes the new normalized titles.</p>
+        </article>
+        <article class="card" id="module-database">
+          <h3>Database</h3>
+          <p>A new Supabase migration adds the array column and GIN index. <code>inspection_db.py</code> writes the new column during transactional snapshot replacement.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="edge-cases" aria-labelledby="edge-cases-heading">
+      <h2 id="edge-cases-heading">6. Edge Cases and Behaviour</h2>
+      <article class="edge-case" id="edge-case-alias">
+        <h3>EC-1: ML abbreviation</h3>
+        <p><code>ML Engineer</code> is accepted and normalized to <code>Machine Learning Engineer</code>. It is not stored as a separate canonical title or role group.</p>
+      </article>
+      <article class="edge-case" id="edge-case-modifiers">
+        <h3>EC-2: Seniority and team modifiers</h3>
+        <p>Titles such as <code>Senior Data Scientist</code> and <code>Staff Machine Learning Engineer, Personalization</code> match because the canonical phrase remains intact.</p>
+      </article>
+      <article class="edge-case" id="edge-case-adjacent">
+        <h3>EC-3: Adjacent roles</h3>
+        <p><code>Data Science Manager</code>, <code>MLOps Engineer</code>, <code>Applied Scientist</code>, and <code>Research Scientist</code> remain rejected unless they independently contain an existing approved AI role or AI signal under current behavior.</p>
+      </article>
+      <article class="edge-case" id="edge-case-mixed-title">
+        <h3>EC-4: Multiple roles in one title</h3>
+        <p>The first recognized phrase wins. This avoids category selection based on YAML ordering or phrase length and makes title order the deterministic employer-provided signal.</p>
+      </article>
+      <article class="edge-case" id="edge-case-trainer">
+        <h3>EC-5: Trainer exclusion</h3>
+        <p>The existing AI trainer exclusion remains authoritative. <code>Machine Learning Engineer - AI Trainer</code> is rejected even though it contains a new canonical role.</p>
+      </article>
+      <article class="edge-case" id="edge-case-deduplication">
+        <h3>EC-6: Deduplicated postings</h3>
+        <p>Aggregation must preserve all role groups represented by merged posting metadata rather than keeping only the first non-unclear canonical candidate group.</p>
+      </article>
+      <article class="edge-case" id="edge-case-historical-detail">
+        <h3>EC-7: Missing historical details</h3>
+        <p>Reprocessing retained raw data can recover listing-level jobs. It cannot recreate historical detail responses that Ashby, Recruitee, or Workable never fetched under the old prefilter. The backfill does not make network requests.</p>
+      </article>
+      <article class="edge-case" id="edge-case-old-records">
+        <h3>EC-8: Existing records</h3>
+        <p>Inspection and enrichment readers treat missing new arrays as empty, so previously processed collections remain readable without rewriting all retained history.</p>
+      </article>
+    </section>
+
+    <section id="user-stories" aria-labelledby="user-stories-heading">
+      <h2 id="user-stories-heading">7. User Stories and Acceptance Criteria</h2>
+      <article class="story" id="us-1">
+        <h3>US-1: Capture core Data Science roles</h3>
+        <p>As an operator, I want Data Scientist postings to pass collection and normalization so companies hiring this role appear in the radar.</p>
+        <p><strong>Acceptance:</strong> <code>Senior Data Scientist</code> is accepted, normalizes to <code>Data Scientist</code>, and receives <code>Data Science Role</code>.</p>
+      </article>
+      <article class="story" id="us-2">
+        <h3>US-2: Capture core Machine Learning roles</h3>
+        <p>As an operator, I want full and abbreviated Machine Learning Engineer titles to be captured under one canonical role.</p>
+        <p><strong>Acceptance:</strong> <code>Machine Learning Engineer</code> and <code>ML Engineer</code> both normalize to <code>Machine Learning Engineer</code> with <code>Machine Learning Role</code>.</p>
+      </article>
+      <article class="story" id="us-3">
+        <h3>US-3: Avoid relabeling as AI Engineer</h3>
+        <p>As an operator, I want new role families labeled distinctly so Data Science and Machine Learning demand is not merged into existing AI execution reporting.</p>
+        <p><strong>Acceptance:</strong> New canonical titles never normalize to <code>AI Engineer</code> unless the raw title's first recognized phrase is an existing AI role.</p>
+      </article>
+      <article class="story" id="us-4">
+        <h3>US-4: Preserve every company role group</h3>
+        <p>As an operator, I want every unique role group observed for a company stored so later filtering can select companies containing any desired group.</p>
+        <p><strong>Acceptance:</strong> A company with AI Product, Data Science, and Machine Learning jobs stores all three values once in <code>role_groups</code>.</p>
+      </article>
+      <article class="story" id="us-5">
+        <h3>US-5: Control search noise</h3>
+        <p>As an operator, I want discovery widened only to approved job titles so query cost and irrelevant board results remain controlled.</p>
+        <p><strong>Acceptance:</strong> Generated role queries include <code>Data Scientist</code>, <code>Machine Learning Engineer</code>, and <code>ML Engineer</code>, but not generic field phrases or adjacent roles.</p>
+      </article>
+      <article class="story" id="us-6">
+        <h3>US-6: Reprocess retained data manually</h3>
+        <p>As an operator, I want a local command that applies the new taxonomy to already stored raw ATS responses without discovering or collecting boards again.</p>
+        <p><strong>Acceptance:</strong> The provided <code>process</code> command reads retained files and rewrites only derived processed outputs.</p>
+      </article>
+    </section>
+
+    <section id="decisions-made" aria-labelledby="decisions-made-heading">
+      <h2 id="decisions-made-heading">8. Decisions Made</h2>
+      <article class="decision" id="decision-1">
+        <h3>D-1: Two distinct role groups</h3>
+        <p>Use <code>Data Science Role</code> and <code>Machine Learning Role</code>. A combined Data/ML group was rejected because it would prevent separate reporting; reusing AI Execution was rejected because it would erase the requested distinction.</p>
+      </article>
+      <article class="decision" id="decision-2">
+        <h3>D-2: Narrow core IC scope</h3>
+        <p>Initially accept only Data Scientist and Machine Learning Engineer titles, plus the ML Engineer alias. A broader technical family and unrestricted keyword matching were rejected due to ambiguity and collection noise.</p>
+      </article>
+      <article class="decision" id="decision-3">
+        <h3>D-3: Separate matching and discovery aliases</h3>
+        <p>Do not make every accepted spelling a search term. Discovery is limited to canonical titles plus the approved ML abbreviation, which allows normalization aliases to grow later without silently increasing query count.</p>
+      </article>
+      <article class="decision" id="decision-4">
+        <h3>D-4: First recognized phrase wins</h3>
+        <p>Resolve mixed titles by source-title order. Longest phrase and taxonomy-order precedence were rejected because they can override the role the employer presents first.</p>
+      </article>
+      <article class="decision" id="decision-5">
+        <h3>D-5: Store company role groups as an array</h3>
+        <p>Add <code>role_groups</code> while retaining <code>role_classification</code>. Dynamic joined labels were rejected because combinations multiply and are poor filter keys; a single prioritized group was rejected because it loses data.</p>
+      </article>
+      <article class="decision" id="decision-6">
+        <h3>D-6: Defer filtering</h3>
+        <p>Persist and index <code>role_groups</code> now, but do not change Supabase RPC filters or the React UI in this feature. This keeps the taxonomy expansion independently reviewable.</p>
+      </article>
+      <article class="decision" id="decision-7">
+        <h3>D-7: Manual raw-only backfill</h3>
+        <p>Provide a processing command for the latest complete retained collection. Do not run board discovery, collection, extraction, enrichment, database sync, or generated-data backfill as part of implementation.</p>
+      </article>
+    </section>
+
+    <section id="implementation-plan" aria-labelledby="implementation-plan-heading">
+      <h2 id="implementation-plan-heading">9. Implementation Tasks</h2>
+      <div class="task-grid">
+        <article class="task" id="task-1">
+          <h3>Task 1: Extend taxonomy and classification</h3>
+          <p>Add the role lists, aliases, new <code>RoleGroup</code> values, canonical alias matching, first-phrase precedence, and central unit tests.</p>
+          <p class="dependency"><strong>Depends on:</strong> none.</p>
+        </article>
+        <article class="task" id="task-2">
+          <h3>Task 2: Widen discovery terms</h3>
+          <p>Generate search queries from canonical roles plus <code>ML Engineer</code>; accept the alias in explicit role selection; add query regression tests.</p>
+          <p class="dependency"><strong>Depends on:</strong> Task 1.</p>
+        </article>
+        <article class="task" id="task-3">
+          <h3>Task 3: Aggregate and export new roles</h3>
+          <p>Add counted role groups, deterministic <code>role_groups</code>, category title lists, mixed-company summary behavior, dedupe coverage, and export sections.</p>
+          <p class="dependency"><strong>Depends on:</strong> Task 1.</p>
+        </article>
+        <article class="task" id="task-4">
+          <h3>Task 4: Persist company role groups</h3>
+          <p>Propagate fields through enrichment and inspection, add the Postgres array migration and GIN index, update sync inserts, and test old-record compatibility.</p>
+          <p class="dependency"><strong>Depends on:</strong> Task 3.</p>
+        </article>
+        <article class="task" id="task-5">
+          <h3>Task 5: Verify providers and document backfill</h3>
+          <p>Test shared prefilter behavior, especially detail selection for Ashby, Recruitee, and Workable; run full checks; return the manual command without executing it.</p>
+          <p class="dependency"><strong>Depends on:</strong> Tasks 2 and 4.</p>
+        </article>
+      </div>
+      <pre aria-label="Task dependency graph"><code>Task 1
+  |--&gt; Task 2 --\
+  |              &gt;--&gt; Task 5
+  |--&gt; Task 3 --&gt; Task 4 --/
+</code></pre>
+    </section>
+
+    <section id="verification-rollout" aria-labelledby="verification-rollout-heading">
+      <h2 id="verification-rollout-heading">10. Verification and Rollout</h2>
+      <section id="test-plan" aria-labelledby="test-plan-heading">
+        <h3 id="test-plan-heading">10.1 Automated Verification</h3>
+        <table>
+          <thead><tr><th>Area</th><th>Required coverage</th></tr></thead>
+          <tbody>
+            <tr><td>Classification</td><td>Canonical roles, alias normalization, seniority, trainer exclusion, adjacent-role rejection, and first-phrase precedence.</td></tr>
+            <tr><td>Provider prefilter</td><td>New roles pass the shared gate; Ashby, Recruitee, and Workable select matching jobs for detail fetches.</td></tr>
+            <tr><td>Discovery</td><td>Three approved terms appear; generic field signals and adjacent roles do not.</td></tr>
+            <tr><td>Aggregation</td><td>New groups are counted, title lists are populated, mixed companies retain all unique groups, and dedupe does not discard group evidence.</td></tr>
+            <tr><td>Downstream</td><td>CSV/Markdown, enrichment records, inspection snapshots, search text, and database sync preserve the new fields.</td></tr>
+            <tr><td>Database</td><td>Migration creates the array and GIN index; local Supabase tests and repeat snapshot sync remain valid.</td></tr>
+          </tbody>
+        </table>
+        <pre><code>uv run pytest
+
+npx supabase start
+npx supabase db reset
+npx supabase test db</code></pre>
+      </section>
+
+      <section id="manual-backfill" aria-labelledby="manual-backfill-heading">
+        <h3 id="manual-backfill-heading">10.2 Manual Backfill</h3>
+        <p>The latest complete retained ATS collection is <code>2026-07-03</code>. Implementation will return the following command to the operator but will not execute it:</p>
+        <pre><code>uv run ai-hiring-radar process --date 2026-07-03</code></pre>
+        <p>The command reads <code>data/raw/ats/2026-07-03/</code> and regenerates <code>data/processed/job_candidates_2026-07-03.jsonl</code> and <code>data/processed/companies_2026-07-03.jsonl</code>. It does not run discovery or make collection requests.</p>
+        <p>If the operator later chooses to publish the regenerated records to inspection after applying the migration, the separate command is:</p>
+        <pre><code>uv run ai-hiring-radar sync-inspection-db --date 2026-07-03</code></pre>
+      </section>
+    </section>
+
+    <section id="upgrade-paths" aria-labelledby="upgrade-paths-heading">
+      <h2 id="upgrade-paths-heading">11. Upgrade Paths</h2>
+      <article class="upgrade-path" id="upgrade-path-1">
+        <h3>11.1 Role-group inspection filter</h3>
+        <p>Add Supabase array-overlap filtering, filter options derived from <code>role_groups</code>, and a React multi-select after the stored taxonomy has been validated with real collections.</p>
+      </article>
+      <article class="upgrade-path" id="upgrade-path-2">
+        <h3>11.2 Expanded technical taxonomy</h3>
+        <p>Evaluate MLOps Engineer, Applied Scientist, Research Scientist, ML Scientist, and leadership roles using observed false-negative data rather than broad assumptions.</p>
+      </article>
+      <article class="upgrade-path" id="upgrade-path-3">
+        <h3>11.3 Multi-valued job classification</h3>
+        <p>Store multiple role groups on a single job if first-phrase precedence proves too lossy for hybrid titles. This requires a larger candidate contract change and is not needed for the initial expansion.</p>
+      </article>
+      <article class="upgrade-path" id="upgrade-path-4">
+        <h3>11.4 Historical detail recollection</h3>
+        <p>Recollect selected boards only if listing-level historical records prove insufficient. This must use a new collection date rather than rewriting historical raw responses with current network data.</p>
+      </article>
+    </section>
+
+    <section id="changelog" aria-labelledby="changelog-heading">
+      <h2 id="changelog-heading">12. Changelog</h2>
+      <p>2026-07-29 - OpenCode - Initial draft based on the agreed taxonomy, persistence, filtering, and backfill decisions.</p>
+    </section>
+  </main>
+</body>
+</html>

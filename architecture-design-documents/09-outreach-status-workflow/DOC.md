@@ -1,5 +1,7 @@
 # Design Document: Outreach Status Workflow
 
+> **Implementation updated (2026-07-20):** The status and exclusive-workflow contract remains current. Streamlit-specific implementation details are superseded by the React UI and Supabase RPCs documented in `frontend/README.md` and `supabase/README.md`.
+
 | Field | Value |
 |-------|-------|
 | **Status** | Accepted |

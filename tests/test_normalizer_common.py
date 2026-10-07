@@ -109,6 +109,25 @@ def test_build_ats_candidate_preserves_empty_country_fields() -> None:
     assert candidate["job_locations_raw"] == []
 
 
+def test_build_ats_candidate_canonicalizes_machine_learning_alias() -> None:
+    candidate = build_ats_candidate(
+        source=SourceName.ASHBY,
+        metadata={},
+        raw_file=Path("raw.json"),
+        platform_company_slug="acme-ai",
+        platform_job_id="staff-ml-engineer",
+        board_url="https://jobs.ashbyhq.com/acme-ai",
+        source_url="https://jobs.ashbyhq.com/acme-ai/staff-ml-engineer",
+        job_title_raw="Staff ML Engineer",
+        company_raw="Acme AI",
+        country_inference=CountryInference(country_codes=[], countries=[]),
+    )
+
+    assert candidate["job_title_normalized"] == "Machine Learning Engineer"
+    assert candidate["role_search_term"] == "Machine Learning Engineer"
+    assert candidate["role_group"] == "Machine Learning Role"
+
+
 def test_build_ats_candidate_rejects_base_field_conflicts() -> None:
     with pytest.raises(ValueError, match="source_url"):
         build_ats_candidate(

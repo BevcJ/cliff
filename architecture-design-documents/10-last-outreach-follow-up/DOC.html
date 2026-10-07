@@ -18,11 +18,13 @@
     code { padding: .1em .3em; }
     pre { padding: 16px; overflow-x: auto; }
     article { border-left: 4px solid var(--accent); padding: 4px 16px; margin: 18px 0; }
+    .superseded { border: 1px solid var(--line); border-left: 5px solid var(--accent); background: var(--panel); padding: 14px 18px; margin: 0 0 24px; }
     @media (max-width: 720px) { header { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
 <main data-design-doc-version="1">
+  <aside class="superseded"><strong>Implementation updated (2026-07-20):</strong> The follow-up timing contract remains current. Streamlit grid, Python review adapter, and nullable outbound-date details are superseded by the React table and strict Supabase RPC contract documented in <code>frontend/README.md</code> and <code>supabase/README.md</code>.</aside>
   <header id="top">
     <div>
       <p>Canonical Design Document</p>

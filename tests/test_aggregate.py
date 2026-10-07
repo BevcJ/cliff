@@ -41,8 +41,11 @@ def test_aggregate_company_detects_both_role_groups() -> None:
             "company": "Example Company",
             "countries": ["Netherlands", "Denmark"],
             "role_classification": "Both Execution + Product",
+            "role_groups": ["AI Execution Role", "AI Product Role"],
             "ai_execution_titles": ["LLM Engineer"],
             "ai_product_titles": ["AI Product Manager"],
+            "data_science_titles": [],
+            "machine_learning_titles": [],
             "ai_role_title_counts": [
                 {"title": "Senior AI Product Manager - Example Company", "count": 1},
                 {"title": "Staff LLM Engineer - Example Company", "count": 1},
@@ -117,4 +120,50 @@ def test_aggregate_counts_raw_titles_and_includes_unclear_roles() -> None:
     assert companies[0]["ai_role_title_counts"] == [
         {"title": "Senior AI Engineer", "count": 2},
         {"title": "Head of Artificial Intelligence", "count": 1},
+    ]
+    assert companies[0]["role_classification"] == "AI Execution Role"
+    assert companies[0]["role_groups"] == [
+        "AI Execution Role",
+        "Unclear AI Role",
+    ]
+
+
+def test_aggregate_emits_new_title_lists_and_multiple_role_summary() -> None:
+    companies = aggregate_companies(
+        [
+            _candidate(),
+            _candidate(
+                job_title_raw="Senior Data Scientist",
+                job_title_normalized="Data Scientist",
+                role_search_term="Data Scientist",
+                role_group="Data Science Role",
+                source_url="https://example.com/jobs/2",
+            ),
+            _candidate(
+                job_title_raw="Staff ML Engineer",
+                job_title_normalized="Machine Learning Engineer",
+                role_search_term="ML Engineer",
+                role_group="Machine Learning Role",
+                source_url="https://example.com/jobs/3",
+            ),
+            _candidate(
+                job_title_raw="Head of Artificial Intelligence",
+                job_title_normalized="Head of Artificial Intelligence",
+                role_search_term="AI",
+                role_group="Unclear AI Role",
+                source_url="https://example.com/jobs/4",
+            ),
+        ]
+    )
+
+    assert companies[0]["role_classification"] == "Multiple Role Groups"
+    assert companies[0]["role_groups"] == [
+        "AI Product Role",
+        "Data Science Role",
+        "Machine Learning Role",
+        "Unclear AI Role",
+    ]
+    assert companies[0]["data_science_titles"] == ["Data Scientist"]
+    assert companies[0]["machine_learning_titles"] == [
+        "Machine Learning Engineer"
     ]

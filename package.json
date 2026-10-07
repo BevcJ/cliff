@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "scripts": {
+    "cdk": "cdk"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.1033.0"
+  }
+}

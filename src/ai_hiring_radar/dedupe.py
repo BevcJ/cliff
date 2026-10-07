@@ -74,7 +74,20 @@ def _append_unique_posting(
     posting_key = posting.get("posting_key")
     if not posting_key:
         return
-    if any(item.get("posting_key") == posting_key for item in postings):
+    for index, item in enumerate(postings):
+        if item.get("posting_key") != posting_key:
+            continue
+        existing_group = item.get("role_group")
+        incoming_group = posting.get("role_group")
+        if (
+            not existing_group or existing_group == RoleGroup.UNCLEAR.value
+        ) and incoming_group not in {None, "", RoleGroup.UNCLEAR.value}:
+            postings[index] = posting
+        elif (
+            incoming_group not in {None, "", RoleGroup.UNCLEAR.value}
+            and incoming_group != existing_group
+        ):
+            postings.append(posting)
         return
     postings.append(posting)
 

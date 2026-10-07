@@ -16,8 +16,11 @@ def _company(**overrides):  # noqa: ANN001, ANN202 - compact test fixture helper
         "company": "Acme AI",
         "countries": ["Netherlands"],
         "role_classification": "AI Execution Role",
+        "role_groups": ["AI Execution Role", "Machine Learning Role"],
         "ai_execution_titles": ["AI Engineer"],
         "ai_product_titles": [],
+        "data_science_titles": [],
+        "machine_learning_titles": ["Machine Learning Engineer"],
         "ai_role_title_counts": [{"title": "Senior AI Engineer", "count": 1}],
         "matched_search_terms": ["AI Engineer"],
         "evidence_urls": ["https://jobs.example.com/acme"],
@@ -172,6 +175,11 @@ def test_load_company_inspection_data_joins_and_aggregates_records(tmp_path) -> 
     assert record["company_size"] == "101-500"
     assert record["industry"] == "Software"
     assert record["ai_tech_forward_signal"] == "strong"
+    assert record["role_groups"] == [
+        "AI Execution Role",
+        "Machine Learning Role",
+    ]
+    assert record["machine_learning_titles"] == ["Machine Learning Engineer"]
     assert record["company_source_urls"] == [
         "https://example.com/about",
         "https://example.com/team",
@@ -222,6 +230,22 @@ def test_load_company_inspection_data_handles_missing_optional_files(tmp_path) -
     assert dataset.records[0]["jobs"] == []
     assert dataset.records[0]["has_company_enrichment"] is False
     assert dataset.records[0]["has_job_description_extracts"] is False
+
+
+def test_load_company_inspection_data_defaults_legacy_role_arrays(tmp_path) -> None:
+    write_processed_jsonl(
+        "companies_2026-07-02.jsonl",
+        [{"company": "Legacy Company"}],
+        data_dir=tmp_path,
+    )
+
+    record = load_company_inspection_data(
+        "2026-07-02", data_dir=tmp_path
+    ).records[0]
+
+    assert record["role_groups"] == []
+    assert record["data_science_titles"] == []
+    assert record["machine_learning_titles"] == []
 
 
 def test_load_company_inspection_data_fails_when_companies_file_missing(tmp_path) -> None:

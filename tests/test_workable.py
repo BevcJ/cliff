@@ -295,6 +295,43 @@ def test_workable_client_fetches_public_listing_and_detail_endpoints() -> None:
     assert result.job_detail_errors == []
 
 
+def test_workable_client_fetches_details_for_data_science_and_ml_roles() -> None:
+    response = {
+        "total": 4,
+        "results": [
+            {"shortcode": "DS", "title": "Senior Data Scientist"},
+            {"shortcode": "ML", "title": "Staff ML Engineer"},
+            {"shortcode": "MLE", "title": "Machine Learning Engineer"},
+            {"shortcode": "MLOPS", "title": "MLOps Engineer"},
+        ],
+    }
+    detail_requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == "https://apply.workable.com/api/v1/accounts/acme-ai?full=true":
+            return httpx.Response(200, json={"name": "Acme AI"})
+        if str(request.url) == "https://apply.workable.com/api/v3/accounts/acme-ai/jobs":
+            return httpx.Response(200, json=response)
+        detail_requests.append(str(request.url))
+        return httpx.Response(200, json={"shortcode": request.url.path.rsplit("/", 1)[-1]})
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(transport=transport) as http_client:
+        result = WorkableClient(
+            http_client=http_client,
+            request_delay_seconds=0,
+            max_retries=0,
+        ).fetch_board("acme-ai")
+
+    assert sorted(result.job_detail_responses) == ["DS", "ML", "MLE"]
+    assert set(detail_requests) == {
+        build_workable_job_detail_endpoint("acme-ai", "DS"),
+        build_workable_job_detail_endpoint("acme-ai", "ML"),
+        build_workable_job_detail_endpoint("acme-ai", "MLE"),
+    }
+    assert build_workable_job_detail_endpoint("acme-ai", "MLOPS") not in detail_requests
+
+
 def test_workable_client_continues_when_detail_fetch_fails() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if str(request.url) == "https://apply.workable.com/api/v1/accounts/acme-ai?full=true":

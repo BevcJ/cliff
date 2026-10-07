@@ -11,3 +11,16 @@ product_roles:
   - GenAI Product Manager
   - AI Product Owner
   - AI Solutions Product Manager
+
+data_science_roles:
+  - Data Scientist
+
+machine_learning_roles:
+  - Machine Learning Engineer
+
+role_aliases:
+  Machine Learning Engineer:
+    - ML Engineer
+
+discovery_role_aliases:
+  - ML Engineer

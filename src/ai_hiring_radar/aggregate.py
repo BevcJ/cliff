@@ -48,11 +48,14 @@ def _candidate_countries(candidate: dict[str, Any]) -> list[str]:
     return countries
 
 
-COUNTED_ROLE_GROUPS = {
+ROLE_GROUP_ORDER = (
     RoleGroup.AI_EXECUTION.value,
     RoleGroup.AI_PRODUCT.value,
+    RoleGroup.DATA_SCIENCE.value,
+    RoleGroup.MACHINE_LEARNING.value,
     RoleGroup.UNCLEAR.value,
-}
+)
+COUNTED_ROLE_GROUPS = set(ROLE_GROUP_ORDER)
 
 
 def _counted_posting_entry(
@@ -70,6 +73,7 @@ def _counted_posting_entry(
     return {
         "posting_key": cleaned_posting_key,
         "job_title_raw": cleaned_title,
+        "role_group": cleaned_role_group,
     }
 
 
@@ -115,17 +119,17 @@ def _company_key(candidate: dict[str, Any]) -> str:
 
 
 def _role_classification(role_groups: Iterable[str]) -> str:
-    groups = set(role_groups)
-    has_execution = RoleGroup.AI_EXECUTION.value in groups
-    has_product = RoleGroup.AI_PRODUCT.value in groups
-
-    if has_execution and has_product:
+    known_groups = set(role_groups).difference({RoleGroup.UNCLEAR.value})
+    if not known_groups:
+        return RoleGroup.UNCLEAR.value
+    if len(known_groups) == 1:
+        return next(iter(known_groups))
+    if known_groups == {
+        RoleGroup.AI_EXECUTION.value,
+        RoleGroup.AI_PRODUCT.value,
+    }:
         return RoleGroup.BOTH_EXECUTION_AND_PRODUCT.value
-    if has_execution:
-        return RoleGroup.AI_EXECUTION.value
-    if has_product:
-        return RoleGroup.AI_PRODUCT.value
-    return RoleGroup.UNCLEAR.value
+    return RoleGroup.MULTIPLE.value
 
 
 def _why_interesting(
@@ -153,6 +157,8 @@ def aggregate_companies(candidates: Iterable[dict[str, Any]]) -> list[dict[str, 
         role_groups: list[str] = []
         ai_execution_titles: list[str] = []
         ai_product_titles: list[str] = []
+        data_science_titles: list[str] = []
+        machine_learning_titles: list[str] = []
         matched_search_terms: list[str] = []
         evidence_urls: list[str] = []
         sources: list[str] = []
@@ -168,7 +174,8 @@ def aggregate_companies(candidates: Iterable[dict[str, Any]]) -> list[dict[str, 
 
             for country in _candidate_countries(candidate):
                 _append_unique(countries, country)
-            _append_unique(role_groups, role_group)
+            if role_group in COUNTED_ROLE_GROUPS:
+                _append_unique(role_groups, role_group)
             _append_unique(sources, candidate.get("source"))
             _append_unique(evidence_quality, candidate.get("evidence_quality"))
 
@@ -189,8 +196,13 @@ def aggregate_companies(candidates: Iterable[dict[str, Any]]) -> list[dict[str, 
                 _append_unique(ai_execution_titles, title)
             elif role_group == RoleGroup.AI_PRODUCT.value:
                 _append_unique(ai_product_titles, title)
+            elif role_group == RoleGroup.DATA_SCIENCE.value:
+                _append_unique(data_science_titles, title)
+            elif role_group == RoleGroup.MACHINE_LEARNING.value:
+                _append_unique(machine_learning_titles, title)
 
             for posting in _candidate_posting_entries(candidate):
+                _append_unique(role_groups, posting["role_group"])
                 posting_key = posting["posting_key"]
                 if posting_key in seen_posting_keys:
                     continue
@@ -203,14 +215,21 @@ def aggregate_companies(candidates: Iterable[dict[str, Any]]) -> list[dict[str, 
         if not evidence_urls or not matched_search_terms:
             continue
 
+        ordered_role_groups = [
+            role_group for role_group in ROLE_GROUP_ORDER if role_group in role_groups
+        ]
+
         companies.append(
             {
                 "record_type": "company_intelligence_title_only",
                 "company": company,
                 "countries": countries,
-                "role_classification": _role_classification(role_groups),
+                "role_classification": _role_classification(ordered_role_groups),
+                "role_groups": ordered_role_groups,
                 "ai_execution_titles": ai_execution_titles,
                 "ai_product_titles": ai_product_titles,
+                "data_science_titles": data_science_titles,
+                "machine_learning_titles": machine_learning_titles,
                 "ai_role_title_counts": [
                     {"title": title, "count": count}
                     for title, count in title_counts.items()

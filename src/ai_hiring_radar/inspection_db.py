@@ -1,22 +1,18 @@
 from __future__ import annotations
 
-import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 import psycopg
-from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from ai_hiring_radar.inspection import (
     CompanyInspectionDataset,
-    InspectionInputPaths,
-    InspectionLoadCounts,
-    compact_company_inspection_record,
+    build_company_snapshot_payload,
     load_company_inspection_data,
 )
-from ai_hiring_radar.storage_json import DEFAULT_DATA_DIR, format_date, processed_dir
+from ai_hiring_radar.storage_json import DEFAULT_DATA_DIR, format_date
 
 
 @dataclass(frozen=True)
@@ -34,6 +30,7 @@ SUMMARY_PAYLOAD_FIELDS = (
     "company_key",
     "countries",
     "role_classification",
+    "role_groups",
     "sources",
     "workplace_modes",
     "ai_team_contexts",
@@ -104,6 +101,7 @@ def sync_inspection_database(
                           ai_team_contexts,
                           delivery_contexts,
                           role_classification,
+                          role_groups,
                           company_type,
                           company_size,
                           ai_tech_forward_signal,
@@ -126,6 +124,7 @@ def sync_inspection_database(
                           %(ai_team_contexts)s,
                           %(delivery_contexts)s,
                           %(role_classification)s,
+                          %(role_groups)s,
                           %(company_type)s,
                           %(company_size)s,
                           %(ai_tech_forward_signal)s,
@@ -154,98 +153,8 @@ def sync_inspection_database(
     )
 
 
-def load_company_inspection_data_from_database(
-    collection_date: str,
-    *,
-    database_url: str,
-) -> CompanyInspectionDataset | None:
-    normalized_date = format_date(collection_date)
-    if not database_url.strip():
-        return None
-
-    with psycopg.connect(database_url, row_factory=dict_row) as conn:
-        with conn.cursor() as cursor:
-            rows = cursor.execute(
-                """
-                select
-                  s.detail_payload,
-                  c.synced_at
-                from public.inspection_company_snapshots s
-                join public.inspection_collections c
-                  on c.collection_date = s.collection_date
-                where s.collection_date = %s
-                order by lower(s.company), s.company_key
-                """,
-                (normalized_date,),
-            ).fetchall()
-
-            collection_row = None
-            if not rows:
-                collection_row = cursor.execute(
-                    """
-                    select synced_at
-                    from public.inspection_collections
-                    where collection_date = %s
-                    """,
-                    (normalized_date,),
-                ).fetchone()
-
-    if not rows:
-        if collection_row is None:
-            return None
-        return CompanyInspectionDataset(
-            collection_date=normalized_date,
-            records=[],
-            paths=_database_dataset_paths(normalized_date),
-            missing_optional_files=[],
-            counts=_counts_from_records([]),
-            data_source="database",
-            synced_at=_serialize_value(collection_row.get("synced_at")),
-        )
-
-    records = [_json_payload(row.get("detail_payload")) for row in rows]
-    records = [record for record in records if record]
-    if not records:
-        return None
-
-    return CompanyInspectionDataset(
-        collection_date=normalized_date,
-        records=records,
-        paths=_database_dataset_paths(normalized_date),
-        missing_optional_files=[],
-        counts=_counts_from_records(records),
-        data_source="database",
-        synced_at=_serialize_value(rows[0].get("synced_at")),
-    )
-
-
-def list_synced_collection_dates(
-    *,
-    database_url: str,
-) -> list[str]:
-    if not database_url.strip():
-        return []
-
-    with psycopg.connect(database_url, row_factory=dict_row) as conn:
-        with conn.cursor() as cursor:
-            rows = cursor.execute(
-                """
-                select collection_date
-                from public.inspection_collections
-                order by collection_date
-                """
-            ).fetchall()
-
-    dates: list[str] = []
-    for row in rows:
-        value = _serialize_value(row.get("collection_date"))
-        if value:
-            dates.append(format_date(value))
-    return dates
-
-
 def build_inspection_company_snapshot(record: dict[str, Any]) -> dict[str, Any]:
-    detail_payload = compact_company_inspection_record(record)
+    detail_payload = build_company_snapshot_payload(record)
     company_key = _clean_text(detail_payload.get("company_key"))
     if not company_key:
         raise ValueError("company_key is required for inspection database snapshots")
@@ -260,6 +169,7 @@ def build_inspection_company_snapshot(record: dict[str, Any]) -> dict[str, Any]:
         "ai_team_contexts": _clean_list(detail_payload.get("ai_team_contexts")),
         "delivery_contexts": _clean_list(detail_payload.get("delivery_contexts")),
         "role_classification": _clean_text(detail_payload.get("role_classification")) or None,
+        "role_groups": _clean_list(detail_payload.get("role_groups")),
         "company_type": _clean_text(detail_payload.get("company_type")) or None,
         "company_size": _clean_text(detail_payload.get("company_size")) or None,
         "ai_tech_forward_signal": _clean_text(detail_payload.get("ai_tech_forward_signal"))
@@ -288,6 +198,8 @@ def build_inspection_snapshot_search_text(record: dict[str, Any]) -> str:
     ]
     values.extend(_clean_list(record.get("ai_execution_titles")))
     values.extend(_clean_list(record.get("ai_product_titles")))
+    values.extend(_clean_list(record.get("data_science_titles")))
+    values.extend(_clean_list(record.get("machine_learning_titles")))
     values.extend(_clean_list(record.get("matched_search_terms")))
     for title_count in record.get("ai_role_title_counts") or []:
         if isinstance(title_count, dict):
@@ -341,43 +253,6 @@ def _summary_payload(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _database_dataset_paths(collection_date: str) -> InspectionInputPaths:
-    root = processed_dir(data_dir=DEFAULT_DATA_DIR)
-    return InspectionInputPaths(
-        companies_path=root / f"companies_{collection_date}.jsonl",
-        candidates_path=root / f"job_candidates_{collection_date}.jsonl",
-        job_description_extracts_path=root
-        / f"job_description_extracts_{collection_date}.jsonl",
-        company_enrichment_extracts_path=root
-        / f"company_enrichment_extracts_{collection_date}.jsonl",
-    )
-
-
-def _counts_from_records(records: list[dict[str, Any]]) -> InspectionLoadCounts:
-    return InspectionLoadCounts(
-        companies_loaded=len(records),
-        candidates_loaded=sum(int(record.get("job_count") or 0) for record in records),
-        job_description_extracts_loaded=sum(
-            int(record.get("job_description_extract_count") or 0) for record in records
-        ),
-        company_enrichments_loaded=sum(
-            1 for record in records if record.get("has_company_enrichment")
-        ),
-    )
-
-
-def _json_payload(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
-    return {}
-
-
 def _record_sources(record: dict[str, Any]) -> list[str]:
     values: list[str] = []
     for source in _clean_list(record.get("sources")):
@@ -420,11 +295,3 @@ def _int_value(value: object | None) -> int:
         return int(str(value or "0"))
     except ValueError:
         return 0
-
-
-def _serialize_value(value: Any) -> str | None:
-    if value is None:
-        return None
-    if hasattr(value, "isoformat") and not isinstance(value, str):
-        return value.isoformat()
-    return str(value)

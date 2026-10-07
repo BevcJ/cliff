@@ -1,0 +1,6 @@
+{
+  "app": "uv run --group infra python -m infra.static_review.app",
+  "context": {
+    "@aws-cdk/core:newStyleStackSynthesis": true
+  }
+}

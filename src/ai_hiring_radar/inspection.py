@@ -12,7 +12,6 @@ from ai_hiring_radar.storage_json import (
     DEFAULT_DATA_DIR,
     format_date,
     processed_dir,
-    write_processed_jsonl,
 )
 
 
@@ -43,21 +42,9 @@ class CompanyInspectionDataset:
     paths: InspectionInputPaths
     missing_optional_files: list[Path]
     counts: InspectionLoadCounts
-    data_source: str = "jsonl"
-    fallback_warning: str | None = None
-    synced_at: str | None = None
 
 
-@dataclass(frozen=True)
-class InspectionArtifactResult:
-    collection_date: str
-    path: Path
-    company_count: int
-    job_count: int
-
-
-INSPECTION_ARTIFACT_VERSION = 1
-INSPECTION_ARTIFACT_PREFIX = "inspection_companies_"
+INSPECTION_SNAPSHOT_VERSION = 1
 COMPANY_ENRICHMENT_FIELDS = (
     "company_description",
     "company_description_source_urls",
@@ -88,14 +75,17 @@ ENRICHMENT_SOURCE_URL_FIELDS = (
     "source_urls",
 )
 
-ARTIFACT_COMPANY_FIELDS = (
+SNAPSHOT_COMPANY_FIELDS = (
     "record_type",
     "company",
     "company_key",
     "countries",
     "role_classification",
+    "role_groups",
     "ai_execution_titles",
     "ai_product_titles",
+    "data_science_titles",
+    "machine_learning_titles",
     "ai_role_title_counts",
     "matched_search_terms",
     "evidence_urls",
@@ -126,7 +116,7 @@ ARTIFACT_COMPANY_FIELDS = (
     "has_contacts",
 )
 
-ARTIFACT_JOB_FIELDS = (
+SNAPSHOT_JOB_FIELDS = (
     "job_id",
     "job_title_raw",
     "job_title_normalized",
@@ -159,53 +149,12 @@ def load_company_inspection_data(
     data_dir: Path = DEFAULT_DATA_DIR,
 ) -> CompanyInspectionDataset:
     normalized_date = format_date(collection_date)
-    paths = _inspection_input_paths(normalized_date, data_dir=data_dir)
-    if paths.companies_path.exists():
-        return _load_full_company_inspection_data(normalized_date, data_dir=data_dir)
-
-    artifact_path = inspection_artifact_path(normalized_date, data_dir=data_dir)
-    if artifact_path.exists():
-        return _load_inspection_artifact_data(normalized_date, data_dir=data_dir)
-
     return _load_full_company_inspection_data(normalized_date, data_dir=data_dir)
 
 
-def export_company_inspection_artifact(
-    collection_date: str,
-    *,
-    data_dir: Path = DEFAULT_DATA_DIR,
-) -> InspectionArtifactResult:
-    normalized_date = format_date(collection_date)
-    dataset = _load_full_company_inspection_data(normalized_date, data_dir=data_dir)
-    records = [compact_company_inspection_record(record) for record in dataset.records]
-    path = write_processed_jsonl(
-        inspection_artifact_filename(normalized_date),
-        records,
-        data_dir=data_dir,
-    )
-    return InspectionArtifactResult(
-        collection_date=normalized_date,
-        path=path,
-        company_count=len(records),
-        job_count=sum(len(record.get("jobs") or []) for record in records),
-    )
-
-
-def compact_company_inspection_record(record: dict[str, Any]) -> dict[str, Any]:
-    """Return the safe compact inspection shape used by artifacts and DB snapshots."""
-    return _compact_inspection_record(record)
-
-
-def inspection_artifact_filename(collection_date: str) -> str:
-    return f"{INSPECTION_ARTIFACT_PREFIX}{format_date(collection_date)}.jsonl"
-
-
-def inspection_artifact_path(
-    collection_date: str,
-    *,
-    data_dir: Path = DEFAULT_DATA_DIR,
-) -> Path:
-    return processed_dir(data_dir=data_dir) / inspection_artifact_filename(collection_date)
+def build_company_snapshot_payload(record: dict[str, Any]) -> dict[str, Any]:
+    """Return the sanitized company payload stored in inspection snapshots."""
+    return _build_snapshot_payload(record)
 
 
 def _load_full_company_inspection_data(
@@ -257,52 +206,19 @@ def _load_full_company_inspection_data(
     )
 
 
-def _load_inspection_artifact_data(
-    collection_date: str,
-    *,
-    data_dir: Path = DEFAULT_DATA_DIR,
-) -> CompanyInspectionDataset:
-    normalized_date = format_date(collection_date)
-    paths = _inspection_input_paths(normalized_date, data_dir=data_dir)
-    records, skipped = _read_required_dict_jsonl(
-        inspection_artifact_path(normalized_date, data_dir=data_dir)
-    )
-    job_count = sum(len(record.get("jobs") or []) for record in records)
-    job_description_extract_count = sum(
-        int(record.get("job_description_extract_count") or 0) for record in records
-    )
-    company_enrichment_count = sum(
-        1 for record in records if record.get("has_company_enrichment")
-    )
-
-    return CompanyInspectionDataset(
-        collection_date=normalized_date,
-        records=records,
-        paths=paths,
-        missing_optional_files=[],
-        counts=InspectionLoadCounts(
-            companies_loaded=len(records),
-            candidates_loaded=job_count,
-            job_description_extracts_loaded=job_description_extract_count,
-            company_enrichments_loaded=company_enrichment_count,
-            skipped_companies=skipped,
-        ),
-    )
-
-
-def _compact_inspection_record(record: dict[str, Any]) -> dict[str, Any]:
-    compact = _compact_mapping(record, ARTIFACT_COMPANY_FIELDS)
-    compact["inspection_artifact_version"] = INSPECTION_ARTIFACT_VERSION
+def _build_snapshot_payload(record: dict[str, Any]) -> dict[str, Any]:
+    compact = _compact_mapping(record, SNAPSHOT_COMPANY_FIELDS)
+    compact["inspection_artifact_version"] = INSPECTION_SNAPSHOT_VERSION
     compact["jobs"] = [
-        _compact_job_record(job)
+        _build_snapshot_job_payload(job)
         for job in record.get("jobs") or []
         if isinstance(job, dict)
     ]
     return compact
 
 
-def _compact_job_record(job: dict[str, Any]) -> dict[str, Any]:
-    return _compact_mapping(job, ARTIFACT_JOB_FIELDS)
+def _build_snapshot_job_payload(job: dict[str, Any]) -> dict[str, Any]:
+    return _compact_mapping(job, SNAPSHOT_JOB_FIELDS)
 
 
 def _compact_mapping(
@@ -517,8 +433,11 @@ def _build_job_record(
 def _normalize_company_list_fields(record: dict[str, Any]) -> None:
     for field in (
         "countries",
+        "role_groups",
         "ai_execution_titles",
         "ai_product_titles",
+        "data_science_titles",
+        "machine_learning_titles",
         "matched_search_terms",
         "evidence_urls",
         "sources",

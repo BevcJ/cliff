@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ai_hiring_radar.company_enrichment.constants import DEFAULT_COMPANY_ENRICHMENT_MODEL
@@ -20,6 +20,14 @@ CONFIG_DIR = PACKAGE_DIR / "configs"
 
 class Settings(BaseSettings):
     serper_api_key: str | None = Field(default=None, validation_alias="SERPER_API_KEY")
+    fullenrich_api_key: str | None = Field(
+        default=None,
+        validation_alias="FULLENRICH_API_KEY",
+    )
+    prospeo_api_key: str | None = Field(
+        default=None,
+        validation_alias="PROSPEO_API_KEY",
+    )
     job_description_extraction_model: str = Field(
         default=DEFAULT_JOB_DESCRIPTION_EXTRACTION_MODEL,
         validation_alias="JOB_DESCRIPTION_EXTRACTION_MODEL",
@@ -82,10 +90,43 @@ class CountriesConfig(BaseModel):
 class TaxonomyConfig(BaseModel):
     execution_roles: list[str]
     product_roles: list[str]
+    data_science_roles: list[str] = Field(default_factory=list)
+    machine_learning_roles: list[str] = Field(default_factory=list)
+    role_aliases: dict[str, list[str]] = Field(default_factory=dict)
+    discovery_role_aliases: list[str] = Field(default_factory=list)
 
     @property
     def all_roles(self) -> list[str]:
-        return [*self.execution_roles, *self.product_roles]
+        return [
+            *self.execution_roles,
+            *self.product_roles,
+            *self.data_science_roles,
+            *self.machine_learning_roles,
+        ]
+
+    @property
+    def discovery_roles(self) -> list[str]:
+        return list(dict.fromkeys([*self.all_roles, *self.discovery_role_aliases]))
+
+    @model_validator(mode="after")
+    def validate_aliases(self) -> TaxonomyConfig:
+        unknown_targets = set(self.role_aliases).difference(self.all_roles)
+        if unknown_targets:
+            targets = ", ".join(sorted(unknown_targets))
+            raise ValueError(f"Role aliases reference unknown canonical roles: {targets}")
+
+        matching_terms = {
+            *self.all_roles,
+            *(alias for aliases in self.role_aliases.values() for alias in aliases),
+        }
+        unknown_discovery_aliases = set(self.discovery_role_aliases).difference(
+            matching_terms
+        )
+        if unknown_discovery_aliases:
+            aliases = ", ".join(sorted(unknown_discovery_aliases))
+            raise ValueError(f"Unknown discovery role aliases: {aliases}")
+
+        return self
 
 
 def load_yaml_file(path: Path) -> dict[str, Any]:

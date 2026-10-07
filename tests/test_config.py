@@ -1,5 +1,8 @@
+import pytest
+
 from ai_hiring_radar.config import (
     Settings,
+    TaxonomyConfig,
     load_countries_config,
     load_taxonomy_config,
     require_inspection_database_url,
@@ -22,7 +25,35 @@ def test_taxonomy_config_loads_role_groups() -> None:
 
     assert "LLM Engineer" in config.execution_roles
     assert "AI Product Manager" in config.product_roles
-    assert len(config.all_roles) == len(config.execution_roles) + len(config.product_roles)
+    assert config.data_science_roles == ["Data Scientist"]
+    assert config.machine_learning_roles == ["Machine Learning Engineer"]
+    assert config.role_aliases == {"Machine Learning Engineer": ["ML Engineer"]}
+    assert config.all_roles[-2:] == ["Data Scientist", "Machine Learning Engineer"]
+    assert "ML Engineer" not in config.all_roles
+    assert config.discovery_roles[-3:] == [
+        "Data Scientist",
+        "Machine Learning Engineer",
+        "ML Engineer",
+    ]
+
+
+def test_taxonomy_config_rejects_unknown_alias_target() -> None:
+    with pytest.raises(ValueError, match="unknown canonical roles: Unknown Role"):
+        TaxonomyConfig(
+            execution_roles=["AI Engineer"],
+            product_roles=[],
+            role_aliases={"Unknown Role": ["Alias"]},
+        )
+
+
+def test_taxonomy_config_rejects_unmatched_discovery_alias() -> None:
+    with pytest.raises(ValueError, match="Unknown discovery role aliases: DS"):
+        TaxonomyConfig(
+            execution_roles=[],
+            product_roles=[],
+            data_science_roles=["Data Scientist"],
+            discovery_role_aliases=["DS"],
+        )
 
 
 def test_settings_loads_serper_api_key_from_environment(monkeypatch) -> None:

@@ -4,8 +4,6 @@ from collections import Counter
 from datetime import date
 import json
 from pathlib import Path
-import subprocess
-import sys
 from typing import Annotated
 
 import typer
@@ -22,8 +20,8 @@ from ai_hiring_radar.config import (
     require_inspection_database_url,
     require_serper_api_key,
 )
+from ai_hiring_radar.contact_email_evaluation import run_contact_email_evaluation
 from ai_hiring_radar.export import export_company_review_files
-from ai_hiring_radar.inspection import export_company_inspection_artifact
 from ai_hiring_radar.inspection_db import sync_inspection_database
 from ai_hiring_radar.job_description_extraction import (
     PydanticAIJobDescriptionExtractor,
@@ -114,22 +112,6 @@ def _resolve_explicit_board_values(
     return True, board_values
 
 
-def _launch_inspection_app(collection_date: str) -> None:
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "streamlit",
-            "run",
-            str(Path(__file__).with_name("inspection_app.py")),
-            "--",
-            "--date",
-            collection_date,
-        ],
-        check=True,
-    )
-
-
 def _parse_location_depth(value: str) -> LocationDepth:
     try:
         return LocationDepth(value.strip().lower())
@@ -148,17 +130,17 @@ def _parse_ats_discovery_depth(value: str) -> AtsDiscoveryDepth:
 
 def _parse_role_terms(role: str | None) -> list[str]:
     taxonomy_config = load_taxonomy_config()
-    all_roles = taxonomy_config.all_roles
+    discovery_roles = taxonomy_config.discovery_roles
 
     if role is None:
-        return all_roles
+        return discovery_roles
 
     normalized_role = " ".join(role.split()).casefold()
-    roles_by_normalized_name = {item.casefold(): item for item in all_roles}
+    roles_by_normalized_name = {item.casefold(): item for item in discovery_roles}
     selected_role = roles_by_normalized_name.get(normalized_role)
     if selected_role is None:
         raise typer.BadParameter(
-            "Unknown role term. Available role terms: " + ", ".join(all_roles)
+            "Unknown role term. Available role terms: " + ", ".join(discovery_roles)
         )
 
     return [selected_role]
@@ -267,7 +249,7 @@ def _build_ats_discovery_queries(
         pages=pages,
         location_depth=location_depth,
         discovery_depth=discovery_depth,
-        role_terms=load_taxonomy_config().all_roles,
+        role_terms=load_taxonomy_config().discovery_roles,
     )
 
 
@@ -1030,6 +1012,85 @@ def enrich_companies(
     _print_company_enrichment_issue_samples(result)
 
 
+@app.command("evaluate-contact-emails")
+def evaluate_contact_emails(
+    input_path: Annotated[
+        Path,
+        typer.Option(
+            "--input",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+            help="CSV downloaded from the Supabase contact evaluation query.",
+        ),
+    ],
+    output_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--output-dir",
+            file_okay=False,
+            help="Optional run directory. Reuse it to resume an interrupted run.",
+        ),
+    ] = None,
+    limit: Annotated[
+        int | None,
+        typer.Option(
+            "--limit",
+            min=1,
+            help="Limit the run to the first N contacts eligible for provider lookup.",
+        ),
+    ] = None,
+) -> None:
+    """Compare FullEnrich and Prospeo work-email results for exported contacts."""
+    settings = load_settings()
+    missing_keys = [
+        name
+        for name, value in (
+            ("FULLENRICH_API_KEY", settings.fullenrich_api_key),
+            ("PROSPEO_API_KEY", settings.prospeo_api_key),
+        )
+        if not (value or "").strip()
+    ]
+    if missing_keys:
+        console.print(
+            "[red]Missing required environment variable(s): "
+            + ", ".join(missing_keys)
+            + ". Add them to the root .env file.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    console.print("Running contact email evaluation. FullEnrich may take several minutes.")
+    try:
+        result = run_contact_email_evaluation(
+            input_path,
+            fullenrich_api_key=settings.fullenrich_api_key or "",
+            prospeo_api_key=settings.prospeo_api_key or "",
+            limit=limit,
+            output_dir=output_dir,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:  # noqa: BLE001 - provider failures need a readable CLI error.
+        console.print(f"[red]Contact email evaluation failed: {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    console.print(
+        "Contact email evaluation complete: "
+        f"{result.manifest_count} companies, "
+        f"{result.eligible_count} provider lookups, "
+        f"{result.existing_email_count} existing emails, "
+        f"{result.missing_contact_count} without a named contact."
+    )
+    console.print(
+        f"Accepted: FullEnrich {result.fullenrich_found_count}, "
+        f"Prospeo {result.prospeo_found_count}; "
+        f"recommended emails {result.recommended_count}."
+    )
+    console.print(f"Results: {result.run_dir.as_posix()}")
+    console.print(f"Comparison: {(result.run_dir / 'comparison.csv').as_posix()}")
+
+
 def _print_llm_usage_summary(result) -> None:  # noqa: ANN001 - shared CLI helper.
     usage = getattr(result, "llm_usage", None)
     if usage is None or not any(
@@ -1094,29 +1155,6 @@ def export_command(
     console.print(f"Markdown: {result.markdown_path.as_posix()}")
 
 
-@app.command("export-inspection")
-def export_inspection_command(
-    date_value: Annotated[
-        str,
-        typer.Option("--date", help="Collection date in YYYY-MM-DD format."),
-    ],
-) -> None:
-    """Export compact Streamlit inspection data for deployment."""
-    collection_date = _parse_iso_date(date_value)
-    try:
-        result = export_company_inspection_artifact(collection_date)
-    except FileNotFoundError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(code=1) from exc
-
-    console.print(
-        "Inspection artifact complete: "
-        f"{result.company_count} company record(s), "
-        f"{result.job_count} job record(s)."
-    )
-    console.print(f"Artifact: {result.path.as_posix()}")
-
-
 @app.command("sync-inspection-db")
 def sync_inspection_db_command(
     date_value: Annotated[
@@ -1156,22 +1194,6 @@ def sync_inspection_db_command(
         if result.database_url_configured
         else "Database: not configured"
     )
-
-
-@app.command("inspect")
-def inspect_command(
-    date_value: Annotated[
-        str,
-        typer.Option("--date", help="Collection date in YYYY-MM-DD format."),
-    ],
-) -> None:
-    """Launch the local read-only company inspection UI."""
-    collection_date = _parse_iso_date(date_value)
-    console.print(f"Launching company inspection UI for {collection_date}.")
-    try:
-        _launch_inspection_app(collection_date)
-    except subprocess.CalledProcessError as exc:
-        raise typer.Exit(code=exc.returncode) from exc
 
 
 def main() -> None:

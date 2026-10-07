@@ -45,22 +45,36 @@ def _searchable_text(value: object | None) -> str:
 
 
 def _build_known_roles(taxonomy_config: TaxonomyConfig) -> tuple[KnownRole, ...]:
-    roles = [
-        KnownRole(role=role, group=RoleGroup.AI_EXECUTION, match_key=_phrase_key(role))
-        for role in taxonomy_config.execution_roles
-    ]
-    roles.extend(
-        KnownRole(role=role, group=RoleGroup.AI_PRODUCT, match_key=_phrase_key(role))
-        for role in taxonomy_config.product_roles
+    grouped_roles = (
+        (taxonomy_config.execution_roles, RoleGroup.AI_EXECUTION),
+        (taxonomy_config.product_roles, RoleGroup.AI_PRODUCT),
+        (taxonomy_config.data_science_roles, RoleGroup.DATA_SCIENCE),
+        (taxonomy_config.machine_learning_roles, RoleGroup.MACHINE_LEARNING),
     )
+    roles: list[KnownRole] = []
+    by_canonical_role: dict[str, KnownRole] = {}
+    for canonical_roles, group in grouped_roles:
+        for role in canonical_roles:
+            known_role = KnownRole(
+                role=role,
+                group=group,
+                match_key=_phrase_key(role),
+            )
+            roles.append(known_role)
+            by_canonical_role[role] = known_role
 
-    return tuple(
-        sorted(
-            roles,
-            key=lambda item: (len(item.match_key.split()), len(item.match_key)),
-            reverse=True,
+    for canonical_role, aliases in taxonomy_config.role_aliases.items():
+        known_role = by_canonical_role[canonical_role]
+        roles.extend(
+            KnownRole(
+                role=known_role.role,
+                group=known_role.group,
+                match_key=_phrase_key(alias),
+            )
+            for alias in aliases
         )
-    )
+
+    return tuple(roles)
 
 
 @lru_cache(maxsize=1)
@@ -80,10 +94,19 @@ def match_known_role(
     taxonomy_config: TaxonomyConfig | None = None,
 ) -> KnownRole | None:
     haystack = _searchable_text(value)
+    matches: list[tuple[int, int, int, KnownRole]] = []
     for known_role in known_roles(taxonomy_config):
-        if f" {known_role.match_key} " in haystack:
-            return known_role
-    return None
+        position = haystack.find(f" {known_role.match_key} ")
+        if position >= 0:
+            matches.append(
+                (
+                    position,
+                    -len(known_role.match_key.split()),
+                    -len(known_role.match_key),
+                    known_role,
+                )
+            )
+    return min(matches, key=lambda match: match[:3])[3] if matches else None
 
 
 def has_ai_signal(value: object | None) -> bool:
@@ -148,7 +171,7 @@ def classify_role(
     role_search_term: str | None = None,
     taxonomy_config: TaxonomyConfig | None = None,
 ) -> str:
-    for value in (job_title_normalized, job_title_raw, role_search_term):
+    for value in (job_title_raw, job_title_normalized, role_search_term):
         known_role = match_known_role(value, taxonomy_config=taxonomy_config)
         if known_role is not None:
             return known_role.group.value

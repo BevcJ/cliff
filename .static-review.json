@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "site_id": "8f7c40f2-c7c2-4d0d-b75e-cb3ddc43b2fe",
+  "site_name": "static-review",
+  "project_id": "a84f7e6b-5928-4a1d-a9a1-6c6e18a1f8fd",
+  "project_slug": "pareto",
+  "project_title": "Pareto",
+  "aws_region": "eu-central-1"
+}

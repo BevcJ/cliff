@@ -36,8 +36,11 @@ def _company(**overrides: Any) -> dict[str, Any]:
         "company": "Acme AI",
         "countries": ["Netherlands"],
         "role_classification": "AI Execution Role",
+        "role_groups": ["AI Execution Role", "Machine Learning Role"],
         "ai_execution_titles": ["AI Engineer"],
         "ai_product_titles": [],
+        "data_science_titles": [],
+        "machine_learning_titles": ["Machine Learning Engineer"],
         "ai_role_title_counts": [{"title": "AI Engineer", "count": 1}],
         "matched_search_terms": ["AI Engineer"],
         "evidence_urls": ["https://jobs.example.com/ai-engineer"],
@@ -265,7 +268,14 @@ def test_build_enrichment_input_includes_compact_company_and_candidate_context()
     assert enrichment_input["company"] == "Acme AI"
     assert enrichment_input["countries"] == ["Netherlands"]
     assert enrichment_input["role_classification"] == "AI Execution Role"
+    assert enrichment_input["role_groups"] == [
+        "AI Execution Role",
+        "Machine Learning Role",
+    ]
     assert enrichment_input["ai_execution_titles"] == ["AI Engineer"]
+    assert enrichment_input["machine_learning_titles"] == [
+        "Machine Learning Engineer"
+    ]
     assert enrichment_input["ai_role_title_counts"] == [
         {"title": "AI Engineer", "count": 1}
     ]
@@ -325,6 +335,12 @@ def test_build_enrichment_record_excludes_raw_content_and_unions_source_urls() -
     assert record["model"] == "gpt-5-mini"
     assert record["company"] == "Acme AI"
     assert record["company_key"] == "acme-ai"
+    assert record["role_groups"] == [
+        "AI Execution Role",
+        "Machine Learning Role",
+    ]
+    assert record["data_science_titles"] == []
+    assert record["machine_learning_titles"] == ["Machine Learning Engineer"]
     assert record["company_description"] == (
         "Acme AI builds logistics automation software."
     )
@@ -343,6 +359,30 @@ def test_build_enrichment_record_excludes_raw_content_and_unions_source_urls() -
     assert "search_result_dump" not in record
     assert "description" not in record
     assert "job_description_sections" not in record
+
+
+def test_build_enrichment_record_defaults_missing_new_arrays() -> None:
+    legacy_company = {
+        key: value
+        for key, value in _company().items()
+        if key
+        not in {
+            "role_groups",
+            "data_science_titles",
+            "machine_learning_titles",
+        }
+    }
+
+    record = build_enrichment_record(
+        company_record=legacy_company,
+        enrichment=CompanyEnrichment(),
+        model="gpt-5-mini",
+        enriched_at="2026-07-02T10:00:00Z",
+    )
+
+    assert record["role_groups"] == []
+    assert record["data_science_titles"] == []
+    assert record["machine_learning_titles"] == []
 
 
 def test_quality_error_rejects_core_facts_with_only_ats_sources() -> None:

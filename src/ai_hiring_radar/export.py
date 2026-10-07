@@ -20,8 +20,11 @@ EXPORT_COLUMNS = [
     "Company",
     "Countries",
     "Role Classification",
+    "Role Groups",
     "AI Execution Titles",
     "AI Product Titles",
+    "Data Science Titles",
+    "Machine Learning Titles",
     "AI Role Title Counts",
     "Matched Search Terms",
     "Evidence URLs",
@@ -36,8 +39,11 @@ FIELD_BY_COLUMN = {
     "Company": "company",
     "Countries": "countries",
     "Role Classification": "role_classification",
+    "Role Groups": "role_groups",
     "AI Execution Titles": "ai_execution_titles",
     "AI Product Titles": "ai_product_titles",
+    "Data Science Titles": "data_science_titles",
+    "Machine Learning Titles": "machine_learning_titles",
     "AI Role Title Counts": "ai_role_title_counts",
     "Matched Search Terms": "matched_search_terms",
     "Evidence URLs": "evidence_urls",
@@ -49,9 +55,12 @@ FIELD_BY_COLUMN = {
 }
 
 MARKDOWN_ROLE_ORDER = [
+    RoleGroup.MULTIPLE.value,
     RoleGroup.BOTH_EXECUTION_AND_PRODUCT.value,
     RoleGroup.AI_PRODUCT.value,
     RoleGroup.AI_EXECUTION.value,
+    RoleGroup.DATA_SCIENCE.value,
+    RoleGroup.MACHINE_LEARNING.value,
     RoleGroup.UNCLEAR.value,
 ]
 
@@ -122,7 +131,12 @@ def _markdown_escape(value: Any) -> str:
 
 def _record_titles(record: dict[str, Any]) -> str:
     titles: list[str] = []
-    for field in ("ai_execution_titles", "ai_product_titles"):
+    for field in (
+        "ai_execution_titles",
+        "ai_product_titles",
+        "data_science_titles",
+        "machine_learning_titles",
+    ):
         values = record.get(field)
         if isinstance(values, list):
             for value in values:
@@ -156,9 +170,9 @@ def build_company_markdown(records: list[dict[str, Any]], *, collection_date: st
             continue
 
         lines.append(
-            "| Company | Countries | Titles | Role Title Counts | Matched Search Terms | Evidence URLs | Why Interesting |"
+            "| Company | Countries | Role Groups | Titles | Role Title Counts | Matched Search Terms | Evidence URLs | Why Interesting |"
         )
-        lines.append("| --- | --- | --- | --- | --- | --- | --- |")
+        lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
         for record in group_records:
             lines.append(
                 "| "
@@ -166,6 +180,7 @@ def build_company_markdown(records: list[dict[str, Any]], *, collection_date: st
                     [
                         _markdown_escape(record.get("company")),
                         _markdown_escape(record.get("countries")),
+                        _markdown_escape(record.get("role_groups")),
                         _markdown_escape(_record_titles(record)),
                         _markdown_escape(_record_title_counts(record)),
                         _markdown_escape(record.get("matched_search_terms")),

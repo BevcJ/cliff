@@ -6,7 +6,10 @@ from enum import StrEnum
 class RoleGroup(StrEnum):
     AI_EXECUTION = "AI Execution Role"
     AI_PRODUCT = "AI Product Role"
+    DATA_SCIENCE = "Data Science Role"
+    MACHINE_LEARNING = "Machine Learning Role"
     BOTH_EXECUTION_AND_PRODUCT = "Both Execution + Product"
+    MULTIPLE = "Multiple Role Groups"
     UNCLEAR = "Unclear AI Role"
 
 

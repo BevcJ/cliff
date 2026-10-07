@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from ai_hiring_radar.config import load_countries_config
+from ai_hiring_radar.config import load_countries_config, load_taxonomy_config
 from ai_hiring_radar.search_locations import LocationDepth
 from ai_hiring_radar.sources.ats_discovery import (
     AtsDiscoveryDepth,
@@ -77,6 +77,37 @@ def test_generate_ats_discovery_queries_supports_exhaustive_scale() -> None:
         for query in queries
     )
     assert {query.request_params["num"] for query in queries} == {5}
+
+
+def test_generate_ats_discovery_queries_uses_only_approved_new_role_terms() -> None:
+    queries = generate_ats_discovery_queries(
+        provider=FAKE_PROVIDER,
+        countries_config=load_countries_config(),
+        country_codes=["nl"],
+        role_terms=load_taxonomy_config().discovery_roles,
+        signal_terms=[],
+        pages=1,
+        location_depth=LocationDepth.COUNTRY,
+        discovery_depth=AtsDiscoveryDepth.BROAD,
+    )
+
+    role_terms = {
+        query.discovery_terms[0]
+        for query in queries
+        if query.discovery_query_type == "role"
+    }
+    assert {
+        "Data Scientist",
+        "Machine Learning Engineer",
+        "ML Engineer",
+    }.issubset(role_terms)
+    assert {
+        "data science",
+        "machine learning",
+        "MLOps Engineer",
+        "Applied Scientist",
+        "Research Scientist",
+    }.isdisjoint(role_terms)
 
 
 def test_extract_ats_board_records_dedupes_by_provider_slug() -> None:

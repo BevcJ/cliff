@@ -8,8 +8,11 @@ from ai_hiring_radar.hashing import normalize_hash_part
 
 COMPANY_SEQUENCE_FIELDS = (
     "countries",
+    "role_groups",
     "ai_execution_titles",
     "ai_product_titles",
+    "data_science_titles",
+    "machine_learning_titles",
     "matched_search_terms",
     "evidence_urls",
     "sources",

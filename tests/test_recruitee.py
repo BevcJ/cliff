@@ -355,6 +355,40 @@ def test_collect_recruitee_boards_writes_raw_response_details_and_manifest(tmp_p
     assert manifest["resumed_files"] == result.resumed_files
 
 
+def test_collect_recruitee_boards_fetches_details_for_data_science_and_ml_roles(
+    tmp_path,
+) -> None:
+    response = _sample_recruitee_response()
+    response["offers"].extend(
+        [
+            {"id": 126, "slug": "data-scientist", "title": "Data Scientist"},
+            {
+                "id": 127,
+                "slug": "machine-learning-engineer",
+                "title": "Machine Learning Engineer",
+            },
+            {"id": 128, "slug": "research-scientist", "title": "Research Scientist"},
+        ]
+    )
+    detail_responses = {
+        **_sample_recruitee_detail_responses(),
+        "126": {"offer": {"id": 126, "title": "Data Scientist"}},
+        "127": {"offer": {"id": 127, "title": "Machine Learning Engineer"}},
+    }
+    client = FakeRecruiteeClient(response, detail_responses)
+
+    collect_recruitee_boards(
+        ["https://acme-ai.recruitee.com"],
+        client=client,  # type: ignore[arg-type]
+        data_dir=tmp_path,
+        clock=lambda: "2026-06-16T10:00:00Z",
+    )
+
+    fetched_ids = {offer_id for _, offer_id in client.fetched_details}
+    assert {"126", "127"}.issubset(fetched_ids)
+    assert "128" not in fetched_ids
+
+
 def test_collect_recruitee_boards_resumes_valid_files_in_board_order_and_uses_explicit_date(
     tmp_path,
 ) -> None:

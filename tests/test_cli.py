@@ -667,6 +667,10 @@ def test_ats_rejects_unknown_provider() -> None:
     assert "unknown" in result.output
 
 
+def test_parse_role_terms_accepts_machine_learning_alias() -> None:
+    assert cli._parse_role_terms("  ml   engineer ") == ["ML Engineer"]
+
+
 @pytest.mark.parametrize("provider", list(AtsProvider))
 def test_ats_discover_dry_run_dispatches_every_provider(
     monkeypatch,
@@ -711,7 +715,7 @@ def test_ats_discover_dry_run_dispatches_every_provider(
     assert generated[0]["pages"] == real_spec.default_pages
     assert generated[0]["location_depth"] is cli.LocationDepth.CITIES
     assert generated[0]["discovery_depth"] is cli.AtsDiscoveryDepth.EXHAUSTIVE
-    assert generated[0]["role_terms"] == cli.load_taxonomy_config().all_roles
+    assert generated[0]["role_terms"] == cli.load_taxonomy_config().discovery_roles
     assert f"Generated 1 {real_spec.display_name} discovery queries." in result.output
 
 
